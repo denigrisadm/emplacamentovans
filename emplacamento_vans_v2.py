@@ -1108,7 +1108,11 @@ def load_excel_from_github(filename):
         return None
 
 
-def carregar_dados_se_necessario():
+carregar_dados_se_necessario()
+
+if not st.session_state.get("df_emp_list"):
+    st.error("Não foi possível carregar os dados do GitHub.")
+    st.stop()
 
     # CARTEIRA
     if "df_cart" not in st.session_state:
