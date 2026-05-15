@@ -1089,33 +1089,48 @@ USERS = st.session_state.users_db
 # ════════════════════════════════════════════════════════════════
 # DADOS: só carrega APÓS login, com spinner discreto
 # ════════════════════════════════════════════════════════════════
-def carregar_dados_se_necessario():
-    """Carrega os arquivos Excel apenas uma vez, após o login."""
-    if st.session_state.dados_carregados:
-        return
-    carregou = False
-    if st.session_state.df_area is None and os.path.exists(AREA_FILE):
-        st.session_state.df_area = load_area(AREA_FILE)
-        carregou = True
-    if st.session_state.df_cart is None and os.path.exists(CARTEIRA_FILE):
-        st.session_state.df_cart = load_carteira(CARTEIRA_FILE)
-        carregou = True
-    if not st.session_state.df_emp_list and os.path.exists(EMP_FILE):
-        df_def = load_emplacamentos(EMP_FILE, label="default")
-        st.session_state.df_emp_list = [df_def]
-        st.session_state.emp_fontes = ["default"]
-        carregou = True
-    if carregou:
-        st.session_state.dados_carregados = True
+@st.cache_data(ttl=3600)
+def load_excel_from_github(filename):
 
-df_area = st.session_state.df_area
-df_cart = st.session_state.df_cart
-# merge_emp cacheado no session_state — recalcula só quando lista muda
-_emp_list_len = len(st.session_state.df_emp_list)
-if st.session_state.df_emp_list and st.session_state.get("_emp_merged_len") != _emp_list_len:
-    st.session_state["_df_emp_merged"] = merge_emp(st.session_state.df_emp_list)
-    st.session_state["_emp_merged_len"] = _emp_list_len
-df_emp = st.session_state.get("_df_emp_merged") if st.session_state.df_emp_list else None
+    token, repo, branch = _gh_secrets()
+
+    try:
+        url = f"https://raw.githubusercontent.com/{repo}/{branch}/data/{filename}"
+
+        df = pd.read_excel(url)
+
+        df = df.loc[:, ~df.columns.astype(str).str.contains("^Unnamed")]
+
+        return df
+
+    except Exception as e:
+        st.error(f"Erro ao carregar {filename}: {e}")
+        return None
+
+
+def carregar_dados_se_necessario():
+
+    # CARTEIRA
+    if "df_cart" not in st.session_state:
+        st.session_state.df_cart = load_excel_from_github("CARTEIRA VANS.xlsx")
+
+    # EMPLACAMENTOS
+    if "df_emp_list" not in st.session_state:
+
+        arquivos_emp = [
+            "EMPLACAMENTO APP VANS.xlsx"
+        ]
+
+        emp_list = []
+
+        for arq in arquivos_emp:
+
+            df = load_excel_from_github(arq)
+
+            if df is not None:
+                emp_list.append(df)
+
+        st.session_state.df_emp_list = emp_list
 
 # ════════════════════════════════════════════════════════════════
 # LOGIN
