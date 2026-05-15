@@ -1298,9 +1298,8 @@ if pagina == "busca":
     st.markdown("""<div class="page-header"><h1>🔍 Busca de Cliente</h1>
     <p>Pesquise por razão social, CNPJ ou placa</p></div>""", unsafe_allow_html=True)
 
-    if df_emp is None:
-        st.warning("⚠️ Carregue os dados na aba Admin → Gerenciar Dados")
-        st.stop()
+    if not st.session_state.get("df_emp_list"):
+    carregar_dados_se_necessario()
 
     q = st.text_input("", placeholder="Nome, CNPJ, CPF ou Placa...", label_visibility="collapsed")
     buscar = st.button("Buscar Cliente", use_container_width=True)
