@@ -23,27 +23,6 @@ DATA_DIR = "data"
 USERS_FILE = os.path.join(DATA_DIR, "users.json")
 NOMES_DENIGRIS = ["NIGRIS", "DE NIGRIS"]
 
-# Estilos CSS Customizados (Igual ao original)
-st.markdown("""
-<style>
-    .main { background-color: #f8f9fa; }
-    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-    .info-card { background: white; padding: 20px; border-radius: 15px; border-left: 5px solid #0a1628; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
-    .sec-title { font-size: 18px; font-weight: 800; color: #0a1628; margin-bottom: 15px; border-bottom: 2px solid #eef2f6; padding-bottom: 8px; }
-    .info-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #f1f4f8; }
-    .info-label { font-weight: 600; color: #64748b; font-size: 13px; }
-    .info-value { font-weight: 700; color: #0f172a; font-size: 13px; text-align: right; }
-    .contact-btn { text-decoration: none !important; transition: all 0.2s; }
-    .contact-btn:hover { transform: translateY(-2px); filter: brightness(1.1); }
-    .btn-whatsapp { background: #25d366; color: white !important; }
-    .btn-phone { background: #1a73e8; color: white !important; }
-    .btn-email { background: #64748b; color: white !important; }
-    .socio-card { background: #f8fafc; padding: 12px; border-radius: 12px; margin-bottom: 8px; border: 1px solid #e2e8f0; }
-    .socio-name { font-weight: 800; color: #0f172a; font-size: 13px; }
-    .socio-role { font-size: 11px; color: #64748b; font-weight: 600; text-transform: uppercase; }
-</style>
-""", unsafe_allow_html=True)
-
 # ════════════════════════════════════════════════════════════════
 # FUNÇÕES DE NORMALIZAÇÃO E UTILITÁRIOS
 # ════════════════════════════════════════════════════════════════
@@ -98,10 +77,6 @@ def is_denigris(series):
         lambda x: any(nome in x for nome in NOMES_DENIGRIS)
     )
 
-def get_modes(series, top=3):
-    counts = series.astype(str).value_counts()
-    return counts.head(top).index.tolist()
-
 # ════════════════════════════════════════════════════════════════
 # GESTÃO DE USUÁRIOS E PERSISTÊNCIA GITHUB
 # ════════════════════════════════════════════════════════════════
@@ -152,13 +127,11 @@ def save_users(users):
     content_str = json.dumps(users, ensure_ascii=False, indent=2)
     content_bytes = content_str.encode("utf-8")
     
-    # Local
     try:
         with open(USERS_FILE, "w", encoding="utf-8") as f:
             f.write(content_str)
     except: pass
     
-    # GitHub
     token, repo, branch = _gh_secrets()
     if token and repo:
         try:
@@ -177,7 +150,7 @@ def registrar_acesso(login):
         st.session_state.users_db = users
 
 # ════════════════════════════════════════════════════════════════
-# CARREGAMENTO DE DADOS (ADAPTADO PARA A NOVA BASE VANS)
+# CARREGAMENTO DE DADOS
 # ════════════════════════════════════════════════════════════════
 
 @st.cache_data(show_spinner=False)
@@ -185,7 +158,6 @@ def load_carteira(src):
     if isinstance(src, BytesIO): src.seek(0)
     df = pd.read_excel(src)
     df.columns = [c.strip() for c in df.columns]
-    # Mapear colunas se necessário
     col_map = {}
     for c in df.columns:
         cu = str(c).upper()
@@ -199,7 +171,6 @@ def load_carteira(src):
 @st.cache_data(show_spinner=False)
 def load_emplacamentos(src, label=""):
     if isinstance(src, BytesIO): src.seek(0)
-    # Detectar header
     raw = pd.read_excel(src, header=None, nrows=15)
     header_row = 0
     for i in range(len(raw)):
@@ -209,7 +180,6 @@ def load_emplacamentos(src, label=""):
     df = pd.read_excel(src, header=header_row)
     df.columns = [str(c).strip() for c in df.columns]
     
-    # Normalização
     df["CNPJ_NORM"] = df["NU_CPF_CNPJ"].astype(str).str.replace(r"\D", "", regex=True)
     df["Data emplacamento"] = pd.to_datetime(df["DT_EMPLACAMENTO"], dayfirst=True, errors="coerce")
     df["Ano"] = df["Data emplacamento"].dt.year
@@ -217,26 +187,17 @@ def load_emplacamentos(src, label=""):
     df["NO_CIDADE_NORM"] = norm_str_series(df["NO_CIDADE"])
     df["_fonte"] = label
     
-    # Limpeza
     df.dropna(subset=["Ano"], inplace=True)
     df["Ano"] = df["Ano"].astype(int)
     
     return df
 
-# ════════════════════════════════════════════════════════════════
-# LÓGICA DE DISTRIBUIÇÃO ALEATÓRIA
-# ════════════════════════════════════════════════════════════════
-
 def distribuir_clientes(df_emp, df_cart, vendedores):
     cnpjs_cart = set(df_cart["CNPJ_NORM"].unique())
-    # Clientes únicos não cadastrados
     nao_cad = df_emp[~df_emp["CNPJ_NORM"].isin(cnpjs_cart)].drop_duplicates(subset=["CNPJ_NORM"])
     lista_cnpjs = nao_cad["CNPJ_NORM"].tolist()
-    
-    # Embaralhar
-    random.seed(42) # Para consistência na mesma sessão se necessário
+    random.seed(42)
     random.shuffle(lista_cnpjs)
-    
     dist = {v: [] for v in vendedores}
     for i, cnpj in enumerate(lista_cnpjs):
         v = vendedores[i % len(vendedores)]
@@ -244,26 +205,13 @@ def distribuir_clientes(df_emp, df_cart, vendedores):
     return dist
 
 # ════════════════════════════════════════════════════════════════
-# CONSULTA RECEITA FEDERAL (Igual ao original)
-# ════════════════════════════════════════════════════════════════
-
-def consultar_cnpj_rf(cnpj14):
-    for url in [f"https://publica.cnpj.ws/cnpj/{cnpj14}", f"https://brasilapi.com.br/api/cnpj/v1/{cnpj14}"]:
-        try:
-            r = requests.get(url, timeout=10)
-            if r.status_code == 200: return r.json(), ""
-        except: pass
-    return None, "Erro na consulta"
-
-# ════════════════════════════════════════════════════════════════
-# INTERFACE STREAMLIT
+# INTERFACE STREAMLIT (VERSÃO ESTÁVEL)
 # ════════════════════════════════════════════════════════════════
 
 def show_login():
+    st.markdown("<h1 style='text-align: center;'>🚐 Emplacamento VANS</h1>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        st.markdown("<h1 style='text-align: center;'>🚐 Emplacamento VANS</h1>", unsafe_allow_html=True)
-        st.markdown("<p style='text-align: center; color: #64748b;'>Sistema de Gestão De Nigris</p>", unsafe_allow_html=True)
         with st.form("login_form"):
             u = st.text_input("Usuário")
             p = st.text_input("Senha", type="password")
@@ -280,16 +228,14 @@ def show_login():
 def show_main():
     with st.sidebar:
         st.markdown(f"### 👤 {st.session_state.user}")
-        st.markdown(f"**Perfil:** {st.session_state.perfil.title()}")
         if st.button("🚪 Sair", use_container_width=True):
             st.session_state.auth = False
             st.rerun()
         st.markdown("---")
-        
         if st.session_state.perfil == "gestor":
-            menu = st.radio("Navegação", ["📊 Dashboard", "🎯 Distribuição", "👥 Usuários"])
+            menu = st.radio("Menu", ["📊 Dashboard", "🎯 Distribuição", "👥 Usuários"])
         else:
-            menu = st.radio("Navegação", ["📋 Meus Clientes", "📈 Histórico"])
+            menu = st.radio("Menu", ["📋 Meus Clientes", "📈 Histórico"])
 
     if menu == "📊 Dashboard": show_dashboard()
     elif menu == "🎯 Distribuição": show_dist_page()
@@ -298,144 +244,79 @@ def show_main():
     elif menu == "👥 Usuários": show_users_page()
 
 def show_dashboard():
-    st.title("📊 Dashboard de Emplacamentos VANS")
-    
-    c1, c2 = st.columns(2)
-    with c1:
-        f_cart = st.file_uploader("Upload Carteira", type=["xlsx"])
-    with c2:
-        f_emp = st.file_uploader("Upload Emplacamentos", type=["xlsx"])
+    st.title("📊 Dashboard")
+    f1, f2 = st.columns(2)
+    with f1: f_cart = st.file_uploader("Carteira", type=["xlsx"])
+    with f2: f_emp = st.file_uploader("Emplacamentos", type=["xlsx"])
     
     if f_cart and f_emp:
-        if st.button("🚀 Processar Dados", use_container_width=True):
-            with st.spinner("Processando..."):
-                st.session_state.df_cart = load_carteira(f_cart)
-                st.session_state.df_emp = load_emplacamentos(f_emp, "Upload")
-                st.success("Dados carregados!")
-                st.rerun()
+        if st.button("Processar Dados", use_container_width=True):
+            st.session_state.df_cart = load_carteira(f_cart)
+            st.session_state.df_emp = load_emplacamentos(f_emp, "Upload")
+            st.rerun()
     
     if "df_emp" in st.session_state:
         df = st.session_state.df_emp
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Total Emplacamentos", len(df))
-        m2.metric("Clientes Únicos", df["CNPJ_NORM"].nunique())
-        m3.metric("Cidades", df["NO_CIDADE"].nunique())
-        
-        # Gráfico por Marca
-        fig = go.Figure(go.Pie(labels=df["DS_MARCA"].value_counts().index, values=df["DS_MARCA"].value_counts().values, hole=.3))
-        fig.update_layout(title="Market Share por Marca")
-        st.plotly_chart(fig, use_container_width=True)
+        st.metric("Total Emplacamentos", len(df))
+        st.dataframe(df.head(100), use_container_width=True)
 
 def show_dist_page():
-    st.title("🎯 Distribuição de Clientes")
+    st.title("🎯 Distribuição")
     if "df_cart" not in st.session_state:
-        st.warning("Carregue os dados no Dashboard primeiro.")
+        st.warning("Carregue os dados no Dashboard.")
         return
-    
     vendedores = sorted([v for v in st.session_state.df_cart["VENDEDOR"].unique() if v and v != "nan"])
-    st.write(f"Vendedores ativos: {len(vendedores)}")
-    
-    if st.button("🔀 Realizar Distribuição Aleatória", type="primary"):
-        dist = distribuir_clientes(st.session_state.df_emp, st.session_state.df_cart, vendedores)
-        st.session_state.dist = dist
-        st.success("Distribuição concluída!")
-    
+    if st.button("Realizar Distribuição", type="primary"):
+        st.session_state.dist = distribuir_clientes(st.session_state.df_emp, st.session_state.df_cart, vendedores)
+        st.success("Concluído!")
     if "dist" in st.session_state:
-        res = [{"Vendedor": k, "Qtd Clientes": len(v)} for k, v in st.session_state.dist.items()]
-        st.table(pd.DataFrame(res))
+        st.write(pd.DataFrame([{"Vendedor": k, "Qtd": len(v)} for k, v in st.session_state.dist.items()]))
 
 def show_vendedor_clientes():
-    st.title("📋 Meus Clientes Atribuídos")
+    st.title("📋 Meus Clientes")
     if "dist" not in st.session_state:
-        st.info("Aguardando distribuição pelo gestor.")
+        st.info("Aguardando distribuição.")
         return
-    
     user = st.session_state.user
-    # Se for gestor, permite escolher vendedor para visualizar
-    if st.session_state.perfil == "gestor":
-        vendedores = list(st.session_state.dist.keys())
-        vendedor_sel = st.selectbox("Visualizar como:", vendedores)
-    else:
-        vendedor_sel = user
-        
+    vendedor_sel = st.selectbox("Vendedor:", list(st.session_state.dist.keys())) if st.session_state.perfil == "gestor" else user
     cnpjs = st.session_state.dist.get(vendedor_sel, [])
+    
     if not cnpjs:
-        st.info("Nenhum cliente atribuído.")
+        st.info("Nenhum cliente.")
         return
-    
+
     df_meus = st.session_state.df_emp[st.session_state.df_emp["CNPJ_NORM"].isin(cnpjs)].copy()
-    
-    # Lista de clientes únicos
     clientes_unicos = df_meus.drop_duplicates(subset=["CNPJ_NORM"]).sort_values("DT_EMPLACAMENTO", ascending=False)
     
     for _, row in clientes_unicos.iterrows():
-        with st.expander(f"🏢 {row['NO_PROPRIETARIO']} - {row['CNPJ_NORM']}"):
-            show_cliente_detalhes(row, df_meus[df_meus["CNPJ_NORM"] == row["CNPJ_NORM"]])
-
-def show_cliente_detalhes(row, history):
-    t1, t2, t3, t4 = st.tabs(["📌 Info", "📞 Contatos", "👨‍💼 Sócios", "📜 Histórico"])
-    
-    with t1:
-        st.markdown('<div class="info-card">', unsafe_allow_html=True)
-        end = f"{row.get('NO_LOGR_CONTATO1', '')}, {row.get('NU_LOGR_CONTATO1', '')} - {row.get('NO_BAIRRO_CONTATO1', '')}"
-        cid = f"{row.get('NO_CIDADE_CONTATO1', '')} / {row.get('SG_ESTADO_CONTATO1', '')}"
-        
-        # Botões Waze/Maps
-        addr_query = f"{end}, {cid}".replace(" ", "+")
-        gmaps = f"https://www.google.com/maps/search/?api=1&query={addr_query}"
-        waze = f"https://waze.com/ul?q={addr_query}"
-        
-        st.markdown(f"**Endereço:** {end}")
-        st.markdown(f"**Cidade:** {cid}")
-        col_m1, col_m2 = st.columns(2)
-        col_m1.markdown(f"[🗺️ Google Maps]({gmaps})", unsafe_allow_html=True)
-        col_m2.markdown(f"[🚗 Waze]({waze})", unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    with t2:
-        st.markdown('<div class="sec-title">📞 Contatos</div>', unsafe_allow_html=True)
-        # Lógica de telefones (DDD + TEL)
-        for i in range(1, 4):
-            tel = format_tel(row.get(f'DDD{i}_CEL_SOCIO1'), row.get(f'TEL{i}_CEL_SOCIO1'))
-            num = make_fone_num(row.get(f'DDD{i}_CEL_SOCIO1'), row.get(f'TEL{i}_CEL_SOCIO1'))
-            if tel:
-                st.markdown(f"📱 {tel} [WhatsApp](https://wa.me/{num})", unsafe_allow_html=True)
-        
-    with t3:
-        st.markdown('<div class="sec-title">👨‍💼 Quadro Societário</div>', unsafe_allow_html=True)
-        for i in range(1, 4):
-            nome = row.get(f'NOME_SOCIO_DIRETOR{i}')
-            if nome and str(nome) != "nan":
-                st.markdown(f"""
-                <div class="socio-card">
-                    <div class="socio-name">{nome}</div>
-                    <div class="socio-role">{row.get(f'CARGO{i}', 'SÓCIO')}</div>
-                </div>
-                """, unsafe_allow_html=True)
-
-    with t4:
-        st.dataframe(history[["DT_EMPLACAMENTO", "DS_MODELO", "DS_MARCA", "NO_CIDADE"]], hide_index=True)
+        with st.expander(f"🏢 {row['NO_PROPRIETARIO']}"):
+            c1, c2 = st.columns(2)
+            with c1:
+                st.write(f"**CNPJ:** {row['CNPJ_NORM']}")
+                st.write(f"**Cidade:** {row['NO_CIDADE']}")
+                addr = f"{row['NO_LOGR_CONTATO1']}, {row['NU_LOGR_CONTATO1']}, {row['NO_CIDADE']}".replace(" ","+")
+                st.markdown(f"[🗺️ Google Maps](https://www.google.com/maps/search/?api=1&query={addr})")
+                st.markdown(f"[🚗 Waze](https://waze.com/ul?q={addr})")
+            with c2:
+                st.write("**Contatos:**")
+                for i in range(1, 4):
+                    tel = format_tel(row.get(f'DDD{i}_CEL_SOCIO1'), row.get(f'TEL{i}_CEL_SOCIO1'))
+                    num = make_fone_num(row.get(f'DDD{i}_CEL_SOCIO1'), row.get(f'TEL{i}_CEL_SOCIO1'))
+                    if tel: st.markdown(f"📱 {tel} [WhatsApp](https://wa.me/{num})")
 
 def show_historico_geral():
-    st.title("📈 Histórico de Emplacamentos")
-    if "df_emp" in st.session_state:
-        st.dataframe(st.session_state.df_emp, use_container_width=True)
+    st.title("📈 Histórico")
+    if "df_emp" in st.session_state: st.dataframe(st.session_state.df_emp)
 
 def show_users_page():
-    st.title("👥 Gestão de Usuários")
+    st.title("👥 Usuários")
     users = load_users()
-    
-    with st.form("new_user"):
-        nu = st.text_input("Novo Usuário")
-        nn = st.text_input("Nome")
-        np = st.selectbox("Perfil", ["vendedor", "gestor"])
-        ns = st.text_input("Senha", type="password")
-        if st.form_submit_button("Criar Usuário"):
-            if nu and ns:
-                users[nu] = {"senha_hash": hash_senha(ns), "perfil": np, "nome": nn, "ultimo_acesso": None}
-                save_users(users)
-                st.success("Usuário criado!")
-                st.rerun()
+    with st.form("new"):
+        nu, nn, np, ns = st.text_input("Usuário"), st.text_input("Nome"), st.selectbox("Perfil", ["vendedor", "gestor"]), st.text_input("Senha", type="password")
+        if st.form_submit_button("Criar"):
+            users[nu] = {"senha_hash": hash_senha(ns), "perfil": np, "nome": nn, "ultimo_acesso": None}
+            save_users(users)
+            st.rerun()
 
 def main():
     if "auth" not in st.session_state: st.session_state.auth = False
