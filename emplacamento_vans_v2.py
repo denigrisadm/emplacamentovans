@@ -2600,6 +2600,8 @@ elif pagina == "admin":
             content_test, sha_or_err = _gh_get_file(api_test, token_gh)
             if content_test is not None:
                 st.markdown(f'<div class="alert-blue" style="margin-bottom:10px;">✅ <strong>GitHub conectado</strong> — repo: <code>{repo_gh}</code> · branch: <code>{branch_gh}</code> · usuários persistem entre reboots.</div>', unsafe_allow_html=True)
+            else:
+                st.markdown(f'<div style="background:#fff8e0;border-left:4px solid #f0a000;padding:10px 14px;border-radius:8px;margin-bottom:10px;font-size:12px;">⚠️ <strong>GitHub com erro.</strong> Detalhes: <code>{sha_or_err}</code></div>', unsafe_allow_html=True)
             # Diagnóstico de arquivos de dados
             import urllib.request, urllib.parse
             arquivos_teste = ["CARTEIRA VANS.xlsx", "EMPLACAMENTO APP VANS.xlsx", "EMPLACAMENTOS.xlsx"]
@@ -2618,8 +2620,6 @@ elif pagina == "admin":
                     diag_linhas.append(f"🔴 <code>{arq}</code> — {type(ex2).__name__}: {ex2}")
             diag_html = "<br>".join(diag_linhas)
             st.markdown(f'<div style="background:#f8f8f8;border-left:3px solid #888;padding:10px 14px;border-radius:6px;font-size:12px;margin-bottom:8px;"><strong>Diagnóstico de arquivos:</strong><br>{diag_html}</div>', unsafe_allow_html=True)
-            else:
-                st.markdown(f'<div style="background:#fff8e0;border-left:4px solid #f0a000;padding:10px 14px;border-radius:8px;margin-bottom:10px;font-size:12px;">⚠️ <strong>GitHub com erro.</strong> Detalhes: <code>{sha_or_err}</code></div>', unsafe_allow_html=True)
         else:
             st.markdown('<div style="background:#fff0f0;border-left:4px solid #c0392b;padding:10px 14px;border-radius:8px;margin-bottom:10px;font-size:12px;">🔴 <strong>GitHub não configurado.</strong> Usuários só persistem até o próximo reboot. Configure <code>GH_TOKEN</code>, <code>GH_REPO</code> e <code>GH_BRANCH</code> nos Secrets do Streamlit Cloud (Settings → Secrets).</div>', unsafe_allow_html=True)
 
