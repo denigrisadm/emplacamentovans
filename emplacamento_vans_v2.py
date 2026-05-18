@@ -1067,7 +1067,7 @@ def carregar_dados_se_necessario():
     # 2. CARTEIRA
     if st.session_state.df_cart is None:
         src = None
-        for filename in ["CARTEIRA VANS.xlsx", "CARTEIRA.xlsx"]:
+        for filename in ["CARTEIRA_VANS.xlsx", "CARTEIRA.xlsx"]:
             src, err = load_excel_from_github(filename)
             if src:
                 st.session_state["_cart_erro"] = None
@@ -2611,7 +2611,7 @@ elif pagina == "admin":
                 st.markdown(f'<div style="background:#fff8e0;border-left:4px solid #f0a000;padding:10px 14px;border-radius:8px;margin-bottom:10px;font-size:12px;">⚠️ <strong>GitHub com erro.</strong> Detalhes: <code>{sha_or_err}</code></div>', unsafe_allow_html=True)
             # Diagnóstico de arquivos de dados
             import urllib.request, urllib.parse
-            arquivos_teste = ["CARTEIRA VANS.xlsx", "EMPLACAMENTO APP VANS.xlsx"]
+            arquivos_teste = ["CARTEIRA_VANS.xlsx", "EMPLACAMENTO APP VANS.xlsx"]
             diag_linhas = []
             for arq in arquivos_teste:
                 arq_enc = urllib.parse.quote(arq)
@@ -2772,7 +2772,7 @@ elif pagina == "admin":
         st.markdown("""
         <div class="alert-blue">
         💡 <strong>Como atualizar os dados:</strong> Substitua os arquivos diretamente no GitHub na pasta <code>data/</code> com os nomes:
-        <br>• <code>CARTEIRA VANS.xlsx</code> · <code>EMPLACAMENTO APP VANS.xlsx</code>
+        <br>• <code>CARTEIRA_VANS.xlsx</code> · <code>EMPLACAMENTO APP VANS.xlsx</code>
         <br>O sistema carrega automaticamente sem necessidade de upload.<br>
         ⚠️ Se o repositório for <strong>privado</strong>, configure o secret <code>GH_TOKEN</code> no Streamlit Cloud.
         </div>
