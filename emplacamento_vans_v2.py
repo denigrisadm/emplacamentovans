@@ -1323,7 +1323,7 @@ if pagina == "busca":
     <p>Pesquise por razão social, CNPJ ou placa</p></div>""", unsafe_allow_html=True)
 
     if not st.session_state.get("df_emp_list"):
-    carregar_dados_se_necessario()
+        carregar_dados_se_necessario()
 
     q = st.text_input("", placeholder="Nome, CNPJ, CPF ou Placa...", label_visibility="collapsed")
     buscar = st.button("Buscar Cliente", use_container_width=True)
