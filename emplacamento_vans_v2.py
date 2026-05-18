@@ -1107,7 +1107,9 @@ def load_excel_from_github(filename):
 
     try:
         import urllib.request
-        url = f"https://raw.githubusercontent.com/{repo}/{branch}/data/{filename}"
+        # Se o repo não tiver "/", assumimos que o owner é denigrisadm (baseado no commit da imagem)
+        full_repo = repo if "/" in repo else f"denigrisadm/{repo}"
+        url = f"https://raw.githubusercontent.com/{full_repo}/{branch}/data/{filename}"
         req = urllib.request.Request(url)
         if token:
             req.add_header("Authorization", f"token {token}")
@@ -1826,7 +1828,58 @@ elif pagina == "emplacamentos":
 
     # Q2: Emplacamentos na área de clientes SEM carteira
     # (não estão na carteira de nenhum vendedor → oportunidade real)
+
+    # ── DISTRIBUIÇÃO EQUITATIVA DE NÃO CADASTRADOS ──
+    # (Regra: Distribuir quase na mesma quantidade para os vendedores da área, sem repetir cliente)
     q2_df = emp_mes[~emp_mes["CNPJ_NORM"].isin(todos_cnpjs_cart)].copy()
+    if not q2_df.empty:
+        # 1. Identificar clientes únicos (CNPJs)
+        cnpjs_nao_cad = sorted(q2_df["CNPJ_NORM"].unique())
+        
+        # 2. Identificar vendedores ativos na área (exceto ZONA LIVRE)
+        vendedores_ativos = sorted(df_area[df_area["Consultor"] != "ZONA LIVRE"]["Consultor"].unique().tolist())
+        
+        if vendedores_ativos:
+            # 3. Distribuir determinísticamente (por hash ou índice) para manter consistência
+            # Usamos o índice do CNPJ na lista ordenada mod o número de vendedores
+            distribuicao = {}
+            for i, cnpj in enumerate(cnpjs_nao_cad):
+                vendedor_idx = i % len(vendedores_ativos)
+                distribuicao[cnpj] = vendedores_ativos[vendedor_idx]
+            
+            # 4. Aplicar filtro: se estivermos vendo um vendedor específico, 
+            # mostrar apenas os clientes atribuídos a ele na distribuição
+            if sel_cons != "Todos":
+                q2_df["Vendedor_Atribuido"] = q2_df["CNPJ_NORM"].map(distribuicao)
+                q2_df = q2_df[q2_df["Vendedor_Atribuido"] == sel_cons].copy()
+            else:
+                # Se for "Todos", podemos adicionar uma coluna informando para quem foi distribuído
+                q2_df["Vendedor_Atribuido"] = q2_df["CNPJ_NORM"].map(distribuicao)
+
+    if not q2_df.empty:
+        # 1. Identificar clientes únicos (CNPJs)
+        cnpjs_nao_cad = sorted(q2_df["CNPJ_NORM"].unique())
+        
+        # 2. Identificar vendedores ativos na área (exceto ZONA LIVRE)
+        vendedores_ativos = sorted(df_area[df_area["Consultor"] != "ZONA LIVRE"]["Consultor"].unique().tolist())
+        
+        if vendedores_ativos:
+            # 3. Distribuir determinísticamente (por hash ou índice) para manter consistência
+            # Usamos o índice do CNPJ na lista ordenada mod o número de vendedores
+            distribuicao = {}
+            for i, cnpj in enumerate(cnpjs_nao_cad):
+                vendedor_idx = i % len(vendedores_ativos)
+                distribuicao[cnpj] = vendedores_ativos[vendedor_idx]
+            
+            # 4. Aplicar filtro: se estivermos vendo um vendedor específico, 
+            # mostrar apenas os clientes atribuídos a ele na distribuição
+            if sel_cons != "Todos":
+                q2_df["Vendedor_Atribuido"] = q2_df["CNPJ_NORM"].map(distribuicao)
+                q2_df = q2_df[q2_df["Vendedor_Atribuido"] == sel_cons].copy()
+            else:
+                # Se for "Todos", podemos adicionar uma coluna informando para quem foi distribuído
+                q2_df["Vendedor_Atribuido"] = q2_df["CNPJ_NORM"].map(distribuicao)
+
 
     # Q3: Compraram na Comercial De Nigris (no mês, área + carteira)
     q3_df = emp_mes[is_denigris(emp_mes["Concessionário"])].copy()
