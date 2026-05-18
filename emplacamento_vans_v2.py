@@ -442,11 +442,11 @@ def _gh_secrets():
     """Retorna (token, repo, branch) dos secrets do Streamlit."""
     try:
         token  = st.secrets.get("GH_TOKEN","")
-        repo   = st.secrets.get("GH_REPO","")
+        repo   = st.secrets.get("GH_REPO","") or "denigrisadm/emplacamentovans"
         branch = st.secrets.get("GH_BRANCH","main")
         return token, repo, branch
     except Exception:
-        return "", "", "main"
+        return "", "denigrisadm/emplacamentovans", "main"
 
 def _gh_get_file(api_url, token):
     """GET na API do GitHub. Retorna (conteúdo_bytes, sha) ou (None, '')."""
@@ -1011,9 +1011,9 @@ USERS = st.session_state.users_db
 def load_excel_from_github(filename):
     """Baixa arquivo do GitHub e retorna BytesIO para os processadores específicos."""
     token, repo, branch = _gh_secrets()
-    
-    # Se não houver config de GitHub, tenta local
-    if not token or not repo:
+
+    # Se não houver repo configurado, tenta local
+    if not repo:
         local_path = os.path.join("data", filename)
         if os.path.exists(local_path):
             try:
@@ -1023,14 +1023,14 @@ def load_excel_from_github(filename):
         return None
 
     try:
-        import urllib.request
-        # Se o repo não tiver "/", assumimos que o owner é denigrisadm (baseado no commit da imagem)
+        import urllib.request, urllib.parse
         full_repo = repo if "/" in repo else f"denigrisadm/{repo}"
-        url = f"https://raw.githubusercontent.com/{full_repo}/{branch}/data/{filename}"
+        # Encode filename para URL (espaços viram %20)
+        filename_enc = urllib.parse.quote(filename)
+        url = f"https://raw.githubusercontent.com/{full_repo}/{branch}/data/{filename_enc}"
         req = urllib.request.Request(url)
         if token:
             req.add_header("Authorization", f"token {token}")
-        
         with urllib.request.urlopen(req, timeout=30) as r:
             return BytesIO(r.read())
     except Exception as e:
@@ -1054,6 +1054,7 @@ def carregar_dados_se_necessario():
     # 2. CARTEIRA
     if st.session_state.df_cart is None:
         # Tentar nomes comuns para o arquivo de carteira
+        src = None
         for filename in ["CARTEIRA VANS.xlsx", "CARTEIRA.xlsx"]:
             src = load_excel_from_github(filename)
             if src: break
@@ -2730,8 +2731,9 @@ elif pagina == "admin":
         st.markdown("""
         <div class="alert-blue">
         💡 <strong>Como atualizar os dados:</strong> Substitua os arquivos diretamente no GitHub na pasta <code>data/</code> com os nomes:
-        <br>• <code>AREA_OPERACIONAL.xlsx</code> · <code>CARTEIRA.xlsx</code> · <code>EMPLACAMENTOS.xlsx</code>
-        <br>O sistema carrega automaticamente sem necessidade de upload.
+        <br>• <code>CARTEIRA VANS.xlsx</code> · <code>EMPLACAMENTO APP VANS.xlsx</code>
+        <br>O sistema carrega automaticamente sem necessidade de upload.<br>
+        ⚠️ Se o repositório for <strong>privado</strong>, configure o secret <code>GH_TOKEN</code> no Streamlit Cloud.
         </div>
         """, unsafe_allow_html=True)
 
