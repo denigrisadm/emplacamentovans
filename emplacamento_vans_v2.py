@@ -569,7 +569,6 @@ def registrar_acesso(login):
 # ════════════════════════════════════════════════════════════════
 # Função load_area removida. A distribuição agora é dinâmica.
 
-@st.cache_data(show_spinner=False)
 def load_carteira(src):
     if isinstance(src, BytesIO): src.seek(0)
     df = pd.read_excel(src)
@@ -581,7 +580,6 @@ def load_carteira(src):
         df["CEP_norm"] = df["CEP"].apply(norm_cep)
     return df
 
-@st.cache_data(show_spinner=False)
 def load_emplacamentos(src, label=""):
     if isinstance(src, BytesIO): src.seek(0)
     # Detectar linha do header (procura "Chassi" nas primeiras 15 linhas; default=0)
