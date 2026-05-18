@@ -1045,8 +1045,15 @@ def load_excel_from_github(filename):
 
 def carregar_dados_se_necessario():
     """Coordena o carregamento dos dados usando os loaders específicos."""
-    if st.session_state.get("dados_carregados") or st.session_state.user is None:
+    if st.session_state.user is None:
         return
+    # Se já carregou com sucesso, não recarrega
+    if st.session_state.get("dados_carregados"):
+        return
+    # GitHub conectado mas cache pode ter guardado None antes do token existir — limpa
+    token, repo, _ = _gh_secrets()
+    if token and repo and st.session_state.df_cart is None:
+        load_excel_from_github.clear()
 
     # 1. AREA (Removida conforme solicitação)
     st.session_state.df_area = None
@@ -1074,7 +1081,8 @@ def carregar_dados_se_necessario():
                     emp_list.append(df)
         st.session_state.df_emp_list = emp_list
             
-    if st.session_state.df_cart is not None and st.session_state.df_emp_list:
+    # Marca como carregado se ao menos a carteira foi obtida (emplacamentos são opcionais)
+    if st.session_state.df_cart is not None or st.session_state.df_emp_list:
         st.session_state.dados_carregados = True
 
 carregar_dados_se_necessario()
