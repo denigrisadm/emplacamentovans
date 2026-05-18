@@ -2624,7 +2624,18 @@ elif pagina == "admin":
                         tamanho = len(r2.read())
                         diag_linhas.append(f"✅ <code>{arq}</code> — {tamanho:,} bytes")
                 except Exception as ex2:
-                    diag_linhas.append(f"🔴 <code>{arq}</code> — {type(ex2).__name__}: {ex2}")
+                    # Testa também a URL raw para diagnóstico completo
+                    try:
+                        arq_enc2 = urllib.parse.quote(arq)
+                        url_raw2 = f"https://raw.githubusercontent.com/{repo_gh}/{branch_gh}/data/{arq_enc2}"
+                        req3 = urllib.request.Request(url_raw2)
+                        if token_gh:
+                            req3.add_header("Authorization", f"token {token_gh}")
+                        with urllib.request.urlopen(req3, timeout=10) as r3:
+                            tamanho3 = len(r3.read())
+                            diag_linhas.append(f"⚠️ <code>{arq}</code> — API falhou mas RAW ok ({tamanho3:,} bytes). Token pode ser inválido.")
+                    except Exception as ex3:
+                        diag_linhas.append(f"🔴 <code>{arq}</code> — API: {ex2} | RAW: {ex3}")
             diag_html = "<br>".join(diag_linhas)
             st.markdown(f'<div style="background:#f8f8f8;border-left:3px solid #888;padding:10px 14px;border-radius:6px;font-size:12px;margin-bottom:8px;"><strong>Diagnóstico de arquivos:</strong><br>{diag_html}</div>', unsafe_allow_html=True)
         else:
