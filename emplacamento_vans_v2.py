@@ -1008,7 +1008,7 @@ USERS = st.session_state.users_db
 # ════════════════════════════════════════════════════════════════
 
 def load_excel_from_github(filename):
-    """Baixa arquivo do GitHub e retorna (BytesIO, erro_str) — sem cache para não travar None."""
+    """Baixa arquivo do GitHub via API (suporta nomes com espaço). Retorna (BytesIO, erro_str)."""
     token, repo, branch = _gh_secrets()
     import urllib.request, urllib.parse
 
@@ -1024,26 +1024,33 @@ def load_excel_from_github(filename):
 
     full_repo = repo if "/" in repo else f"denigrisadm/{repo}"
     filename_enc = urllib.parse.quote(filename)
-    url = f"https://raw.githubusercontent.com/{full_repo}/{branch}/data/{filename_enc}"
 
+    # Usa API do GitHub (funciona com espaços no nome, funciona em repos privados)
+    api_url = f"https://api.github.com/repos/{full_repo}/contents/data/{filename_enc}?ref={branch}"
     try:
-        req = urllib.request.Request(url)
+        req = urllib.request.Request(api_url)
+        req.add_header("Accept", "application/vnd.github.v3.raw")
         if token:
             req.add_header("Authorization", f"token {token}")
         with urllib.request.urlopen(req, timeout=30) as r:
-            status = r.getcode()
-            if status == 200:
-                return BytesIO(r.read()), None
-            return None, f"HTTP {status} para {url}"
+            return BytesIO(r.read()), None
     except Exception as e:
-        # Fallback local
-        local_path = os.path.join("data", filename)
-        if os.path.exists(local_path):
-            try:
-                with open(local_path, "rb") as f:
-                    return BytesIO(f.read()), None
-            except: pass
-        return None, f"{type(e).__name__}: {e} | URL: {url}"
+        # Fallback: tenta URL raw mesmo assim
+        try:
+            url_raw = f"https://raw.githubusercontent.com/{full_repo}/{branch}/data/{filename_enc}"
+            req2 = urllib.request.Request(url_raw)
+            if token:
+                req2.add_header("Authorization", f"token {token}")
+            with urllib.request.urlopen(req2, timeout=30) as r2:
+                return BytesIO(r2.read()), None
+        except Exception as e2:
+            local_path = os.path.join("data", filename)
+            if os.path.exists(local_path):
+                try:
+                    with open(local_path, "rb") as f:
+                        return BytesIO(f.read()), None
+                except: pass
+            return None, f"API: {e} | RAW: {e2}"
 
 def carregar_dados_se_necessario():
     """Coordena o carregamento dos dados usando os loaders específicos."""
@@ -1072,7 +1079,7 @@ def carregar_dados_se_necessario():
 
     # 3. EMPLACAMENTOS
     if not st.session_state.df_emp_list:
-        arquivos_emp = ["EMPLACAMENTO APP VANS.xlsx", "EMPLACAMENTOS.xlsx"]
+        arquivos_emp = ["EMPLACAMENTO APP VANS.xlsx"]
         emp_list = []
         emp_erros = []
         for arq in arquivos_emp:
@@ -2604,7 +2611,7 @@ elif pagina == "admin":
                 st.markdown(f'<div style="background:#fff8e0;border-left:4px solid #f0a000;padding:10px 14px;border-radius:8px;margin-bottom:10px;font-size:12px;">⚠️ <strong>GitHub com erro.</strong> Detalhes: <code>{sha_or_err}</code></div>', unsafe_allow_html=True)
             # Diagnóstico de arquivos de dados
             import urllib.request, urllib.parse
-            arquivos_teste = ["CARTEIRA VANS.xlsx", "EMPLACAMENTO APP VANS.xlsx", "EMPLACAMENTOS.xlsx"]
+            arquivos_teste = ["CARTEIRA VANS.xlsx", "EMPLACAMENTO APP VANS.xlsx"]
             diag_linhas = []
             for arq in arquivos_teste:
                 arq_enc = urllib.parse.quote(arq)
