@@ -1007,41 +1007,43 @@ USERS = st.session_state.users_db
 # DADOS: só carrega APÓS login, com spinner discreto
 # ════════════════════════════════════════════════════════════════
 
-@st.cache_data(ttl=3600, show_spinner=False)
 def load_excel_from_github(filename):
-    """Baixa arquivo do GitHub e retorna BytesIO para os processadores específicos."""
+    """Baixa arquivo do GitHub e retorna (BytesIO, erro_str) — sem cache para não travar None."""
     token, repo, branch = _gh_secrets()
+    import urllib.request, urllib.parse
 
-    # Se não houver repo configurado, tenta local
     if not repo:
         local_path = os.path.join("data", filename)
         if os.path.exists(local_path):
             try:
                 with open(local_path, "rb") as f:
-                    return BytesIO(f.read())
-            except: pass
-        return None
+                    return BytesIO(f.read()), None
+            except Exception as e:
+                return None, f"Erro lendo local: {e}"
+        return None, "Repo não configurado e arquivo local não encontrado"
+
+    full_repo = repo if "/" in repo else f"denigrisadm/{repo}"
+    filename_enc = urllib.parse.quote(filename)
+    url = f"https://raw.githubusercontent.com/{full_repo}/{branch}/data/{filename_enc}"
 
     try:
-        import urllib.request, urllib.parse
-        full_repo = repo if "/" in repo else f"denigrisadm/{repo}"
-        # Encode filename para URL (espaços viram %20)
-        filename_enc = urllib.parse.quote(filename)
-        url = f"https://raw.githubusercontent.com/{full_repo}/{branch}/data/{filename_enc}"
         req = urllib.request.Request(url)
         if token:
             req.add_header("Authorization", f"token {token}")
         with urllib.request.urlopen(req, timeout=30) as r:
-            return BytesIO(r.read())
+            status = r.getcode()
+            if status == 200:
+                return BytesIO(r.read()), None
+            return None, f"HTTP {status} para {url}"
     except Exception as e:
-        # Fallback local em caso de erro de rede/auth
+        # Fallback local
         local_path = os.path.join("data", filename)
         if os.path.exists(local_path):
             try:
                 with open(local_path, "rb") as f:
-                    return BytesIO(f.read())
+                    return BytesIO(f.read()), None
             except: pass
-        return None
+        return None, f"{type(e).__name__}: {e} | URL: {url}"
 
 def carregar_dados_se_necessario():
     """Coordena o carregamento dos dados usando os loaders específicos."""
@@ -1050,36 +1052,39 @@ def carregar_dados_se_necessario():
     # Se já carregou com sucesso, não recarrega
     if st.session_state.get("dados_carregados"):
         return
-    # GitHub conectado mas cache pode ter guardado None antes do token existir — limpa
     token, repo, _ = _gh_secrets()
-    if token and repo and st.session_state.df_cart is None:
-        load_excel_from_github.clear()
 
     # 1. AREA (Removida conforme solicitação)
     st.session_state.df_area = None
     
     # 2. CARTEIRA
     if st.session_state.df_cart is None:
-        # Tentar nomes comuns para o arquivo de carteira
         src = None
         for filename in ["CARTEIRA VANS.xlsx", "CARTEIRA.xlsx"]:
-            src = load_excel_from_github(filename)
-            if src: break
+            src, err = load_excel_from_github(filename)
+            if src:
+                st.session_state["_cart_erro"] = None
+                break
+            else:
+                st.session_state["_cart_erro"] = f"{filename}: {err}"
         if src:
             st.session_state.df_cart = load_carteira(src)
-    
+
     # 3. EMPLACAMENTOS
     if not st.session_state.df_emp_list:
-        # Lista de arquivos de emplacamento
         arquivos_emp = ["EMPLACAMENTO APP VANS.xlsx", "EMPLACAMENTOS.xlsx"]
         emp_list = []
+        emp_erros = []
         for arq in arquivos_emp:
-            src = load_excel_from_github(arq)
+            src, err = load_excel_from_github(arq)
             if src:
                 df = load_emplacamentos(src, label=arq)
                 if df is not None:
                     emp_list.append(df)
+            else:
+                emp_erros.append(f"{arq}: {err}")
         st.session_state.df_emp_list = emp_list
+        st.session_state["_emp_erros"] = emp_erros if not emp_list else []
             
     # Marca como carregado se ao menos a carteira foi obtida (emplacamentos são opcionais)
     if st.session_state.df_cart is not None or st.session_state.df_emp_list:
@@ -2595,6 +2600,24 @@ elif pagina == "admin":
             content_test, sha_or_err = _gh_get_file(api_test, token_gh)
             if content_test is not None:
                 st.markdown(f'<div class="alert-blue" style="margin-bottom:10px;">✅ <strong>GitHub conectado</strong> — repo: <code>{repo_gh}</code> · branch: <code>{branch_gh}</code> · usuários persistem entre reboots.</div>', unsafe_allow_html=True)
+            # Diagnóstico de arquivos de dados
+            import urllib.request, urllib.parse
+            arquivos_teste = ["CARTEIRA VANS.xlsx", "EMPLACAMENTO APP VANS.xlsx", "EMPLACAMENTOS.xlsx"]
+            diag_linhas = []
+            for arq in arquivos_teste:
+                arq_enc = urllib.parse.quote(arq)
+                url_raw = f"https://raw.githubusercontent.com/{repo_gh}/{branch_gh}/data/{arq_enc}"
+                try:
+                    req2 = urllib.request.Request(url_raw)
+                    if token_gh:
+                        req2.add_header("Authorization", f"token {token_gh}")
+                    with urllib.request.urlopen(req2, timeout=10) as r2:
+                        tamanho = len(r2.read())
+                        diag_linhas.append(f"✅ <code>{arq}</code> — {tamanho:,} bytes")
+                except Exception as ex2:
+                    diag_linhas.append(f"🔴 <code>{arq}</code> — {type(ex2).__name__}: {ex2}")
+            diag_html = "<br>".join(diag_linhas)
+            st.markdown(f'<div style="background:#f8f8f8;border-left:3px solid #888;padding:10px 14px;border-radius:6px;font-size:12px;margin-bottom:8px;"><strong>Diagnóstico de arquivos:</strong><br>{diag_html}</div>', unsafe_allow_html=True)
             else:
                 st.markdown(f'<div style="background:#fff8e0;border-left:4px solid #f0a000;padding:10px 14px;border-radius:8px;margin-bottom:10px;font-size:12px;">⚠️ <strong>GitHub com erro.</strong> Detalhes: <code>{sha_or_err}</code></div>', unsafe_allow_html=True)
         else:
@@ -2726,6 +2749,9 @@ elif pagina == "admin":
             st.markdown(f'<div class="kpi-card"><div class="kpi-label">Distribuição</div><div class="kpi-value" style="font-size:16px;">✅ Ativa (Dinâmica)</div></div>', unsafe_allow_html=True)
         with s2:
             sc = f"✅ {len(df_cart)} clientes" if df_cart is not None else "⚠️ Não carregada"
+            cart_err = st.session_state.get("_cart_erro")
+            if cart_err:
+                st.markdown(f'<div style="background:#fff0f0;border-left:3px solid #e74c3c;padding:8px 12px;border-radius:6px;font-size:11px;font-family:monospace;margin-top:6px;word-break:break-all;">🔴 {cart_err}</div>', unsafe_allow_html=True)
             st.markdown(f'<div class="kpi-card"><div class="kpi-label">Carteira</div><div class="kpi-value" style="font-size:16px;">{sc}</div></div>', unsafe_allow_html=True)
         with s3:
             if df_emp is not None:
