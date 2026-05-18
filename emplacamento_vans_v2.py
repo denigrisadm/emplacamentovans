@@ -443,10 +443,10 @@ def _gh_secrets():
     try:
         token  = st.secrets.get("GH_TOKEN","")
         repo   = st.secrets.get("GH_REPO","")
-        branch = st.secrets.get("GH_BRANCH","principal")
+        branch = st.secrets.get("GH_BRANCH","main")
         return token, repo, branch
     except Exception:
-        return "", "", "principal"
+        return "", "", "main"
 
 def _gh_get_file(api_url, token):
     """GET na API do GitHub. Retorna (conteúdo_bytes, sha) ou (None, '')."""
@@ -567,61 +567,7 @@ def registrar_acesso(login):
 # ════════════════════════════════════════════════════════════════
 # CARREGAMENTO DE DADOS
 # ════════════════════════════════════════════════════════════════
-@st.cache_data(show_spinner=False)
-def load_area(src):
-    if isinstance(src, BytesIO): src.seek(0)
-    raw = pd.read_excel(src, header=None)
-
-    # Detectar linha de header — procura linha com "VENDEDOR" ou "CONSULTOR" ou "REGIÃO"
-    header_row = 0
-    for i in range(min(5, len(raw))):
-        vals = raw.iloc[i].astype(str).str.upper().tolist()
-        if any(k in v for v in vals for k in ["VENDED","CONSUL","REGI","MUNIC"]):
-            header_row = i
-            break
-
-    if isinstance(src, BytesIO): src.seek(0)
-    df = pd.read_excel(src, header=header_row)
-    df.columns = [str(c).strip() for c in df.columns]
-
-    # Mapear colunas pelo nome
-    col_map = {}
-    for c in df.columns:
-        cu = str(c).upper()
-        if any(k in cu for k in ["VENDED","CONSUL"]): col_map[c] = "Consultor"
-        elif "REGI" in cu:    col_map[c] = "Regiao"
-        elif "MUNIC" in cu:   col_map[c] = "Municipio"
-        elif "BAIRRO" in cu:  col_map[c] = "Bairro"
-        elif "CEP" in cu and ("INIC" in cu or "INÍC" in cu): col_map[c] = "CEP_Inicial"
-        elif "CEP" in cu and ("FIN" in cu or "FINA" in cu):  col_map[c] = "CEP_Final"
-    df = df.rename(columns=col_map)
-
-    # Garantir todas as colunas necessárias
-    for col in ["Regiao","Municipio","Bairro","Consultor","CEP_Inicial","CEP_Final"]:
-        if col not in df.columns: df[col] = ""
-
-    # Limpar e normalizar
-    df = df[df["Consultor"].astype(str).str.strip().str.upper() != "NAN"].copy()
-    df = df[df["Consultor"].astype(str).str.strip() != ""].copy()
-    df["Consultor"]      = norm_str_series(df["Consultor"].fillna("ZONA LIVRE"))
-    df["Municipio_norm"] = norm_str_series(df["Municipio"])
-    df["Bairro_norm"]    = norm_str_series(df["Bairro"].fillna(""))
-    df["CEP_ini_norm"]   = df["CEP_Inicial"].astype(str).str.replace(r"\D","",regex=True).str.zfill(8).str[:8]
-    df["CEP_fim_norm"]   = df["CEP_Final"].astype(str).str.replace(r"\D","",regex=True).str.zfill(8).str[:8]
-
-    # ── Cidade_real: cidade que aparece em NO_CIDADE dos emplacamentos ──
-    # Para SP Capital os municípios são bairros — cidade real é "SAO PAULO"
-    # Para Grande SP os municípios já são cidades reais
-    def _cidade_real(row):
-        regiao = norm_str(str(row.get("Regiao", "")))
-        if "SAO PAULO CAPITAL" in regiao or "CAPITAL" in regiao:
-            return "SAO PAULO"
-        # Grande SP ou outros — usar o Município como cidade real
-        return norm_str(str(row.get("Municipio", "")))
-
-    df["Cidade_real"] = df.apply(_cidade_real, axis=1)
-
-    return df.reset_index(drop=True)
+# Função load_area removida. A distribuição agora é dinâmica.
 
 @st.cache_data(show_spinner=False)
 def load_carteira(src):
@@ -694,64 +640,35 @@ def merge_emp(dfs):
     m.sort_values("Data emplacamento", inplace=True)
     return m
 
-def get_consultor(cep_norm, cidade_norm, bairro_norm, df_area):
-    """Retorna consultor por CEP (faixa) — critério principal.
-    Fallback por Cidade_real quando não há CEP válido.
+def get_vendedores_ativos():
+    """Retorna lista de nomes de vendedores cadastrados no sistema."""
+    users = st.session_state.get("users_db", {})
+    if not users: return []
+    vendedores = [u["nome"] for u in users.values() if u.get("perfil") == "vendedor"]
+    return sorted(list(set(vendedores)))
+
+def get_consultor_distribuido(cnpj_norm, vendedores_ativos):
+    """Distribui CNPJs de forma equilibrada e determinística entre os vendedores."""
+    if not vendedores_ativos: return None
+    # Usar hash do CNPJ para garantir que o mesmo cliente caia sempre no mesmo vendedor
+    h = int(hashlib.md5(cnpj_norm.encode()).hexdigest(), 16)
+    idx = h % len(vendedores_ativos)
+    return vendedores_ativos[idx]
+
+def get_vendedor_final(cnpj_norm, cart_row, vendedores_ativos):
     """
-    if df_area is None: return None
-    # 1. CEP (sempre preferido)
-    if cep_norm and len(cep_norm) == 8:
-        matches = df_area[
-            (df_area["CEP_ini_norm"] != "") &
-            (df_area["CEP_ini_norm"] <= cep_norm) &
-            (df_area["CEP_fim_norm"] >= cep_norm)
-        ]
-        if not matches.empty:
-            return matches.iloc[0]["Consultor"]
-    # 2. Cidade real (fallback — usa Cidade_real mapeada se disponível)
-    col_cidade = "Cidade_real" if "Cidade_real" in df_area.columns else "Municipio_norm"
-    m = df_area[df_area[col_cidade] == cidade_norm]
-    if not m.empty: return m.iloc[0]["Consultor"]
-    return None
-
-def get_munic_area(consultor, df_area):
-    """Retorna (cidades_reais, cep_ranges) para o consultor.
-    Usa Cidade_real (bairros de SP Capital mapeados para 'SAO PAULO').
+    Regra de atribuição:
+    1. Se está na carteira (cart_row) e tem vendedor, usa ele.
+    2. Se não, distribui entre os vendedores ativos de forma equilibrada.
     """
-    if df_area is None: return [], []
-    sub = df_area[df_area["Consultor"] == consultor]
-    col_cidade = "Cidade_real" if "Cidade_real" in df_area.columns else "Municipio_norm"
-    cidades = sub[col_cidade].dropna().unique().tolist()
-    cidades = [c for c in cidades if c]
-    cep_ranges = sub[sub["CEP_ini_norm"] != ""][["CEP_ini_norm","CEP_fim_norm"]].values.tolist()
-    return cidades, cep_ranges
+    if cart_row:
+        v = safe_str(cart_row.get("VENDEDOR", ""), "").strip()
+        if v and v != "—":
+            return v
+    return get_consultor_distribuido(cnpj_norm, vendedores_ativos)
 
-def emp_da_area(df_emp, cidades_reais, cep_ranges):
-    """Filtra emplacamentos da área.
-    Regra: CEP é o critério principal (sempre preferido).
-    Fallback por cidade real (ex: 'SAO PAULO', 'GUARULHOS') para registros sem CEP válido.
-    cidades_reais já foi mapeado pelo load_area (bairros SP → 'SAO PAULO').
-    """
-    if df_emp is None or df_emp.empty: return pd.DataFrame()
-
-    # ── 1. Filtro por CEP (faixas da área operacional) ──
-    mask_cep = pd.Series(False, index=df_emp.index)
-    if cep_ranges:
-        for ini, fim in cep_ranges:
-            if ini and fim:
-                mask_cep |= (
-                    (df_emp["CEP_norm"].str.len() == 8) &
-                    (df_emp["CEP_norm"] >= ini) &
-                    (df_emp["CEP_norm"] <= fim)
-                )
-
-    # ── 2. Filtro por cidade real (fallback para registros sem CEP válido) ──
-    cidade_set = set(c for c in cidades_reais if c)
-    sem_cep = df_emp["CEP_norm"].str.len() != 8
-    mask_cidade = df_emp["NO_CIDADE_NORM"].isin(cidade_set) & sem_cep
-
-    mask_final = mask_cep | mask_cidade
-    return df_emp[mask_final].copy()
+# Lógica de Área Operacional removida conforme solicitação.
+# A distribuição agora é feita dinamicamente por CNPJ.
 
 def gerar_relatorio_emplacamento(emp_mes, emp_area, cnpjs_carteira_set, todos_cnpjs_cart,
                                   sel_mes_lbl, sel_ano, consultor_nome):
@@ -1131,22 +1048,22 @@ def carregar_dados_se_necessario():
     if st.session_state.get("dados_carregados") or st.session_state.user is None:
         return
 
-    # 1. AREA
-    if st.session_state.df_area is None:
-        src = load_excel_from_github("AREA_OPERACIONAL.xlsx")
-        if src:
-            st.session_state.df_area = load_area(src)
+    # 1. AREA (Removida conforme solicitação)
+    st.session_state.df_area = None
     
     # 2. CARTEIRA
     if st.session_state.df_cart is None:
-        src = load_excel_from_github("CARTEIRA VANS.xlsx")
+        # Tentar nomes comuns para o arquivo de carteira
+        for filename in ["CARTEIRA VANS.xlsx", "CARTEIRA.xlsx"]:
+            src = load_excel_from_github(filename)
+            if src: break
         if src:
             st.session_state.df_cart = load_carteira(src)
     
     # 3. EMPLACAMENTOS
     if not st.session_state.df_emp_list:
         # Lista de arquivos de emplacamento
-        arquivos_emp = ["EMPLACAMENTO APP VANS.xlsx"]
+        arquivos_emp = ["EMPLACAMENTO APP VANS.xlsx", "EMPLACAMENTOS.xlsx"]
         emp_list = []
         for arq in arquivos_emp:
             src = load_excel_from_github(arq)
@@ -1156,7 +1073,7 @@ def carregar_dados_se_necessario():
                     emp_list.append(df)
         st.session_state.df_emp_list = emp_list
             
-    if st.session_state.df_area is not None and st.session_state.df_cart is not None and st.session_state.df_emp_list:
+    if st.session_state.df_cart is not None and st.session_state.df_emp_list:
         st.session_state.dados_carregados = True
 
 carregar_dados_se_necessario()
@@ -1267,15 +1184,8 @@ sigla = nome[0].upper()
 perfil_label = {"gestor":"Administrador","gerente":"Gerente","vendedor":"Consultor"}[perfil]
 logo_html_top = logo_img(30) if LOGO_B64 else '<span style="font-size:14px;font-weight:800;color:#fff;">Comercial De Nigris</span>'
 
-# Info de área para vendedor
+# Info de área removida conforme solicitação
 area_info_html = ""
-if perfil == "vendedor" and df_area is not None:
-    munic_area_top, _ = get_munic_area(cons_key, df_area)
-    if munic_area_top:
-        munic_str = " · ".join(m.title() for m in list(munic_area_top)[:2])
-        if len(munic_area_top) > 2:
-            munic_str += " +" + str(len(munic_area_top)-2)
-        area_info_html = "<div class=\"topbar-area\">📍 " + munic_str + "</div>"
 
 topbar_name_label = "👤 " + nome if perfil == "vendedor" else nome
 
@@ -1416,20 +1326,21 @@ if pagina == "busca":
             cep_c  = norm_cep(last.get("NU_CEP",""))
             cid_c  = norm_str(str(last.get("NO_CIDADE","")))
             bai_c  = norm_str(str(last.get("NO_BAIRRO","")))
-            consultor_resp = get_consultor(cep_c, cid_c, bai_c, df_area)
-            if consultor_resp is None and cart_row:
-                consultor_resp = safe_str(cart_row.get("VENDEDOR",""))
+            vendedores_ativos = get_vendedores_ativos()
+            consultor_resp = get_vendedor_final(cnpj_sel, cart_row, vendedores_ativos)
 
             # ── HERO ──
             nome_exib = safe_str(last.get("NOME_FANTASIA","")) if safe_str(last.get("NOME_FANTASIA","")) != "—" else safe_str(last.get("NOMEPROPRIETARIO",""))
             cls_raw = safe_str(cart_row.get("Classificação Mercedes","")) if cart_row else "—"
             badge_h = f'<span class="badge {badge_class(cls_raw)}">{cls_raw}</span>' if cls_raw != "—" else ""
             resp_h = ""
-            if cart_row:
-                v = safe_str(cart_row.get("VENDEDOR",""))
-                if v != "—": resp_h += f'<span style="background:#e8f0ff;color:#0044aa;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;margin-right:6px;">👤 {v}</span>'
             if consultor_resp and consultor_resp != "—":
-                resp_h += f'<span style="background:#e8f8ee;color:#007030;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;">📍 {consultor_resp.title()}</span>'
+                # Se o vendedor vem da carteira, mostramos com ícone de usuário, se for distribuído, mostramos com ícone de localização
+                is_da_carteira = cart_row and safe_str(cart_row.get("VENDEDOR","")) == consultor_resp
+                icon = "👤" if is_da_carteira else "⚖️"
+                bg_color = "#e8f0ff" if is_da_carteira else "#f0f0f0"
+                text_color = "#0044aa" if is_da_carteira else "#555555"
+                resp_h += f'<span style="background:{bg_color};color:{text_color};padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;margin-right:6px;">{icon} {consultor_resp}</span>'
 
             st.markdown(f"""
             <div class="client-hero">
@@ -1783,28 +1694,29 @@ elif pagina == "emplacamentos":
 
     cnpjs_carteira_set = set(cnpjs_carteira)
 
-    # ── ÁREA: CEP primeiro, cidade como fallback ──
-    # emp_da_area já faz: tenta CEP, fallback cidade
-    emp_area_total = emp_da_area(df_emp, munic_area, cep_ranges)
-
-    # ── Para vendedor específico: adicionar também clientes DA SUA CARTEIRA
-    # que emplacaram fora da área (mas são dele pela carteira)
-    if sel_cons != "Todos" and len(cnpjs_carteira_set) > 0:
-        emp_cart_extra = df_emp[
-            df_emp["CNPJ_NORM"].isin(cnpjs_carteira_set) &
-            ~df_emp.index.isin(emp_area_total.index)
-        ]
-        emp_area = pd.concat([emp_area_total, emp_cart_extra], ignore_index=True)
-    else:
-        emp_area = emp_area_total
-
-    # Remover clientes que estão na carteira de OUTRO vendedor
-    # (exceto se estiverem na carteira DO vendedor consultado)
+    # ── Nova Lógica de Atribuição Dinâmica ──
+    vendedores_ativos = get_vendedores_ativos()
+    
+    # 1. Pegar todos os emplacamentos do período
+    emp_periodo = df_emp[(df_emp["Ano"]==sel_ano) & (df_emp["Mes"]==sel_mes)].copy()
+    
+    # 2. Atribuir vendedor a cada emplacamento
+    def get_vendedor_emp(cnpj):
+        # Verificar se está na carteira
+        row_cart = df_cart[df_cart["CNPJ_NORM"] == cnpj]
+        cart_row = row_cart.iloc[0].to_dict() if not row_cart.empty else None
+        return get_vendedor_final(cnpj, cart_row, vendedores_ativos)
+    
+    # Cachear atribuições para velocidade
+    cnpjs_no_periodo = emp_periodo["CNPJ_NORM"].unique()
+    mapa_vendedores = {cnpj: get_vendedor_emp(cnpj) for cnpj in cnpjs_no_periodo}
+    emp_periodo["VENDEDOR_ATRIBUIDO"] = emp_periodo["CNPJ_NORM"].map(mapa_vendedores)
+    
+    # 3. Filtrar pelo vendedor selecionado
     if sel_cons != "Todos":
-        conflito = cnpjs_outros - cnpjs_carteira_set
-        emp_area = emp_area[~emp_area["CNPJ_NORM"].isin(conflito)].copy()
-
-    emp_mes = emp_area[(emp_area["Ano"]==sel_ano) & (emp_area["Mes"]==sel_mes)].copy()
+        emp_mes = emp_periodo[emp_periodo["VENDEDOR_ATRIBUIDO"] == sel_cons].copy()
+    else:
+        emp_mes = emp_periodo.copy()
 
     # Aviso simples se não há dados no período
     total_emp_geral = len(df_emp[(df_emp["Ano"]==sel_ano) & (df_emp["Mes"]==sel_mes)])
@@ -1826,59 +1738,11 @@ elif pagina == "emplacamentos":
     else:
         q1_df = pd.DataFrame()
 
-    # Q2: Emplacamentos na área de clientes SEM carteira
-    # (não estão na carteira de nenhum vendedor → oportunidade real)
-
-    # ── DISTRIBUIÇÃO EQUITATIVA DE NÃO CADASTRADOS ──
-    # (Regra: Distribuir quase na mesma quantidade para os vendedores da área, sem repetir cliente)
+    # Q2: Emplacamentos de clientes NÃO CADASTRADOS (Oportunidades)
+    # Já estão filtrados para o vendedor atual pela lógica de atribuição dinâmica acima
     q2_df = emp_mes[~emp_mes["CNPJ_NORM"].isin(todos_cnpjs_cart)].copy()
     if not q2_df.empty:
-        # 1. Identificar clientes únicos (CNPJs)
-        cnpjs_nao_cad = sorted(q2_df["CNPJ_NORM"].unique())
-        
-        # 2. Identificar vendedores ativos na área (exceto ZONA LIVRE)
-        vendedores_ativos = sorted(df_area[df_area["Consultor"] != "ZONA LIVRE"]["Consultor"].unique().tolist())
-        
-        if vendedores_ativos:
-            # 3. Distribuir determinísticamente (por hash ou índice) para manter consistência
-            # Usamos o índice do CNPJ na lista ordenada mod o número de vendedores
-            distribuicao = {}
-            for i, cnpj in enumerate(cnpjs_nao_cad):
-                vendedor_idx = i % len(vendedores_ativos)
-                distribuicao[cnpj] = vendedores_ativos[vendedor_idx]
-            
-            # 4. Aplicar filtro: se estivermos vendo um vendedor específico, 
-            # mostrar apenas os clientes atribuídos a ele na distribuição
-            if sel_cons != "Todos":
-                q2_df["Vendedor_Atribuido"] = q2_df["CNPJ_NORM"].map(distribuicao)
-                q2_df = q2_df[q2_df["Vendedor_Atribuido"] == sel_cons].copy()
-            else:
-                # Se for "Todos", podemos adicionar uma coluna informando para quem foi distribuído
-                q2_df["Vendedor_Atribuido"] = q2_df["CNPJ_NORM"].map(distribuicao)
-
-    if not q2_df.empty:
-        # 1. Identificar clientes únicos (CNPJs)
-        cnpjs_nao_cad = sorted(q2_df["CNPJ_NORM"].unique())
-        
-        # 2. Identificar vendedores ativos na área (exceto ZONA LIVRE)
-        vendedores_ativos = sorted(df_area[df_area["Consultor"] != "ZONA LIVRE"]["Consultor"].unique().tolist())
-        
-        if vendedores_ativos:
-            # 3. Distribuir determinísticamente (por hash ou índice) para manter consistência
-            # Usamos o índice do CNPJ na lista ordenada mod o número de vendedores
-            distribuicao = {}
-            for i, cnpj in enumerate(cnpjs_nao_cad):
-                vendedor_idx = i % len(vendedores_ativos)
-                distribuicao[cnpj] = vendedores_ativos[vendedor_idx]
-            
-            # 4. Aplicar filtro: se estivermos vendo um vendedor específico, 
-            # mostrar apenas os clientes atribuídos a ele na distribuição
-            if sel_cons != "Todos":
-                q2_df["Vendedor_Atribuido"] = q2_df["CNPJ_NORM"].map(distribuicao)
-                q2_df = q2_df[q2_df["Vendedor_Atribuido"] == sel_cons].copy()
-            else:
-                # Se for "Todos", podemos adicionar uma coluna informando para quem foi distribuído
-                q2_df["Vendedor_Atribuido"] = q2_df["CNPJ_NORM"].map(distribuicao)
+        q2_df["Vendedor_Atribuido"] = q2_df["VENDEDOR_ATRIBUIDO"]
 
 
     # Q3: Compraram na Comercial De Nigris (no mês, área + carteira)
@@ -2038,18 +1902,47 @@ elif pagina == "carteira":
 
     today = pd.Timestamp.now()
 
+    # ── Lógica de Atribuição Dinâmica para a Carteira ──
+    vendedores_ativos = get_vendedores_ativos()
+    
+    # Criar uma visão expandida da carteira que inclui a atribuição dinâmica
+    # 1. Pegar todos os CNPJs que tiveram emplacamentos
+    if df_emp is not None:
+        todos_cnpjs = df_emp["CNPJ_NORM"].unique()
+        df_dist = pd.DataFrame({"CNPJ_NORM": todos_cnpjs})
+        
+        # 2. Cruzar com a carteira atual
+        df_dist = df_dist.merge(df_cart[["CNPJ_NORM", "VENDEDOR", "Nome", "CPF/CNPJ", "Classificação Mercedes"]], on="CNPJ_NORM", how="left")
+        
+        # 3. Aplicar a regra de vendedor final para todos
+        def atribuir(row):
+            # Se já tem vendedor na carteira, mantém
+            v_cart = safe_str(row.get("VENDEDOR", ""), "").strip()
+            if v_cart and v_cart != "—":
+                return v_cart
+            # Se não, distribui
+            return get_consultor_distribuido(row["CNPJ_NORM"], vendedores_ativos)
+        
+        df_dist["VENDEDOR_FINAL"] = df_dist.apply(atribuir, axis=1)
+        
+        # 4. Recuperar nomes de quem não estava na carteira (pegar do emplacamento)
+        # (Isso garante que a carteira mostre também os "não cadastrados" atribuídos ao vendedor)
+        nomes_emp = df_emp.sort_values("Data emplacamento").groupby("CNPJ_NORM").last()[["NOMEPROPRIETARIO", "CPFCNPJPROPRIETARIO"]]
+        df_dist = df_dist.merge(nomes_emp, on="CNPJ_NORM", how="left")
+        df_dist["Nome"] = df_dist["Nome"].fillna(df_dist["NOMEPROPRIETARIO"])
+        df_dist["CPF/CNPJ"] = df_dist["CPF/CNPJ"].fillna(df_dist["CPFCNPJPROPRIETARIO"])
+        df_dist["VENDEDOR"] = df_dist["VENDEDOR_FINAL"]
+    else:
+        df_dist = df_cart.copy()
+
     # Filtrar por consultor (vendedor vê só a sua)
     if perfil in ("gestor","gerente"):
-        vends = ["Todos"] + sorted(df_cart["VENDEDOR"].dropna().unique().tolist())
+        vends = ["Todos"] + sorted(df_dist["VENDEDOR"].dropna().unique().tolist())
         sel_vend = st.selectbox("Vendedor:", vends)
-        cart_view = df_cart.copy() if sel_vend == "Todos" else df_cart[df_cart["VENDEDOR"] == sel_vend].copy()
+        cart_view = df_dist.copy() if sel_vend == "Todos" else df_dist[df_dist["VENDEDOR"] == sel_vend].copy()
     else:
-        # vendedor vê sua carteira pelo nome
-        # Normalizar dos dois lados para garantir match (remove acentos, espaços duplos)
-        cart_view = df_cart[norm_str_series(df_cart["VENDEDOR"]) == norm_str(cons_key)].copy()
-        # Fallback: tentar match simples se normalizado não achou
-        if cart_view.empty:
-            cart_view = df_cart[df_cart["VENDEDOR"].str.upper().str.strip() == cons_key.upper().strip()].copy()
+        # vendedor vê sua carteira pelo nome (atribuição dinâmica inclusa)
+        cart_view = df_dist[norm_str_series(df_dist["VENDEDOR"]) == norm_str(cons_key)].copy()
 
     total_cart = len(cart_view)
 
@@ -2719,26 +2612,21 @@ elif pagina == "admin":
 
         st.markdown('<div class="sec-title">➕ Criar / Editar Usuário</div>', unsafe_allow_html=True)
 
-        # Obter lista de consultores — tudo normalizado para comparação consistente
-        consultores_area = []
-        if df_area is not None:
-            consultores_area = sorted([
-                norm_str(c) for c in df_area["Consultor"].unique()
-                if norm_str(c) not in ("ZONA LIVRE", "")
-            ])
+        # Obter lista de consultores da carteira — tudo normalizado para comparação consistente
         vendedores_cart = []
         if df_cart is not None:
             vendedores_cart = sorted([
                 norm_str(v) for v in df_cart["VENDEDOR"].dropna().unique()
                 if str(v).strip()
             ])
-        todos_consultores = sorted(set(consultores_area + vendedores_cart))
+        todos_consultores = vendedores_cart
 
         st.markdown("""
         <div class="alert-blue" style="margin-bottom:14px;">
         💡 <strong>Como funciona o vínculo:</strong><br>
-        • Para <strong>vendedores</strong> — selecione o nome exato da planilha de Área Operacional.<br>
+        • Para <strong>vendedores</strong> — selecione o nome exato da planilha de Carteira.<br>
         • O sistema vai filtrar automaticamente a carteira e os emplacamentos desse consultor.<br>
+        • Clientes não cadastrados serão distribuídos automaticamente entre os vendedores ativos.<br>
         • Para <strong>gerente/gestor</strong> — o vínculo com consultor não é necessário.
         </div>
         """, unsafe_allow_html=True)
@@ -2753,23 +2641,16 @@ elif pagina == "admin":
                 if todos_consultores:
                     opcoes_cons = ["— Selecione —"] + todos_consultores
                     sel_cons_idx = st.selectbox(
-                        "Consultor vinculado (Área Operacional / Carteira):",
+                        "Consultor vinculado (Nome na Carteira):",
                         opcoes_cons,
-                        help="Selecione o nome exatamente como aparece nas planilhas"
+                        help="Selecione o nome exatamente como aparece na planilha de carteira"
                     )
                     new_cons_key = "" if sel_cons_idx == "— Selecione —" else sel_cons_idx
                     if new_cons_key:
                         # Dropdown já mostra nomes normalizados — comparação direta
                         key_norm = norm_str(new_cons_key)
-                        na_area  = key_norm in consultores_area
                         na_cart  = key_norm in vendedores_cart
-                        # Debug silencioso — remover após confirmar
-                        _ = (key_norm, consultores_area[:3])
-                        col_v1, col_v2 = st.columns(2)
-                        with col_v1:
-                            st.markdown(f'<div style="font-size:12px;padding:6px 10px;border-radius:8px;background:{"#e8f8ee" if na_area else "#fff4e0"};color:{"#007030" if na_area else "#a05000"};">{"✅" if na_area else "⚠️"} Área Operacional</div>', unsafe_allow_html=True)
-                        with col_v2:
-                            st.markdown(f'<div style="font-size:12px;padding:6px 10px;border-radius:8px;background:{"#e8f8ee" if na_cart else "#fff4e0"};color:{"#007030" if na_cart else "#a05000"};">{"✅" if na_cart else "⚠️"} Carteira</div>', unsafe_allow_html=True)
+                        st.markdown(f'<div style="font-size:12px;padding:6px 10px;border-radius:8px;background:{"#e8f8ee" if na_cart else "#fff4e0"};color:{"#007030" if na_cart else "#a05000"};">{"✅" if na_cart else "⚠️"} Localizado na Carteira</div>', unsafe_allow_html=True)
                 else:
                     st.warning("⚠️ Carregue os dados primeiro para ver a lista de consultores.")
                     new_cons_key = st.text_input("Ou digite manualmente:", placeholder="EX: RENATA BELLON").strip().upper()
@@ -2833,8 +2714,7 @@ elif pagina == "admin":
 
         s1,s2,s3 = st.columns(3)
         with s1:
-            sa = f"✅ {len(df_area)} regiões" if df_area is not None else "⚠️ Não carregada"
-            st.markdown(f'<div class="kpi-card"><div class="kpi-label">Área Operacional</div><div class="kpi-value" style="font-size:16px;">{sa}</div></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="kpi-card"><div class="kpi-label">Distribuição</div><div class="kpi-value" style="font-size:16px;">✅ Ativa (Dinâmica)</div></div>', unsafe_allow_html=True)
         with s2:
             sc = f"✅ {len(df_cart)} clientes" if df_cart is not None else "⚠️ Não carregada"
             st.markdown(f'<div class="kpi-card"><div class="kpi-label">Carteira</div><div class="kpi-value" style="font-size:16px;">{sc}</div></div>', unsafe_allow_html=True)
@@ -2858,14 +2738,7 @@ elif pagina == "admin":
         st.markdown('<div class="sec-title">📤 Upload Manual (temporário)</div>', unsafe_allow_html=True)
         col_u1, col_u2 = st.columns(2)
         with col_u1:
-            st.markdown('<div class="upload-box"><div class="upload-title">🗂️ Área Operacional</div>', unsafe_allow_html=True)
-            up_a = st.file_uploader("AREA_OPERACIONAL.xlsx", type=["xlsx"], key="up_area")
-            if up_a:
-                st.session_state.df_area = load_area(BytesIO(up_a.getvalue()))
-                st.success("✅ Área atualizada!")
-            st.markdown('</div>', unsafe_allow_html=True)
-
-            st.markdown('<div class="upload-box" style="margin-top:12px;"><div class="upload-title">📋 Carteira</div>', unsafe_allow_html=True)
+            st.markdown('<div class="upload-box"><div class="upload-title">📋 Carteira</div>', unsafe_allow_html=True)
             up_c = st.file_uploader("CARTEIRA.xlsx", type=["xlsx"], key="up_cart")
             if up_c:
                 st.session_state.df_cart = load_carteira(BytesIO(up_c.getvalue()))
