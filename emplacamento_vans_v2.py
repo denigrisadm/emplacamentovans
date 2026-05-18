@@ -1089,56 +1089,76 @@ USERS = st.session_state.users_db
 # ════════════════════════════════════════════════════════════════
 # DADOS: só carrega APÓS login, com spinner discreto
 # ════════════════════════════════════════════════════════════════
-@st.cache_data(ttl=3600)
+
+@st.cache_data(ttl=3600, show_spinner=False)
 def load_excel_from_github(filename):
-
+    """Baixa arquivo do GitHub e retorna BytesIO para os processadores específicos."""
     token, repo, branch = _gh_secrets()
-
-    try:
-        url = f"https://raw.githubusercontent.com/{repo}/{branch}/data/{filename}"
-
-        df = pd.read_excel(url)
-
-        df = df.loc[:, ~df.columns.astype(str).str.contains("^Unnamed")]
-
-        return df
-
-    except Exception as e:
-        st.error(f"Erro ao carregar {filename}: {e}")
+    
+    # Se não houver config de GitHub, tenta local
+    if not token or not repo:
+        local_path = os.path.join("data", filename)
+        if os.path.exists(local_path):
+            try:
+                with open(local_path, "rb") as f:
+                    return BytesIO(f.read())
+            except: pass
         return None
 
+    try:
+        import urllib.request
+        url = f"https://raw.githubusercontent.com/{repo}/{branch}/data/{filename}"
+        req = urllib.request.Request(url)
+        if token:
+            req.add_header("Authorization", f"token {token}")
+        
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return BytesIO(r.read())
+    except Exception as e:
+        # Fallback local em caso de erro de rede/auth
+        local_path = os.path.join("data", filename)
+        if os.path.exists(local_path):
+            try:
+                with open(local_path, "rb") as f:
+                    return BytesIO(f.read())
+            except: pass
+        return None
+
+def carregar_dados_se_necessario():
+    """Coordena o carregamento dos dados usando os loaders específicos."""
+    if st.session_state.get("dados_carregados") or st.session_state.user is None:
+        return
+
+    # 1. AREA
+    if st.session_state.df_area is None:
+        src = load_excel_from_github("AREA_OPERACIONAL.xlsx")
+        if src:
+            st.session_state.df_area = load_area(src)
+    
+    # 2. CARTEIRA
+    if st.session_state.df_cart is None:
+        src = load_excel_from_github("CARTEIRA VANS.xlsx")
+        if src:
+            st.session_state.df_cart = load_carteira(src)
+    
+    # 3. EMPLACAMENTOS
+    if not st.session_state.df_emp_list:
+        # Lista de arquivos de emplacamento
+        arquivos_emp = ["EMPLACAMENTO APP VANS.xlsx"]
+        emp_list = []
+        for arq in arquivos_emp:
+            src = load_excel_from_github(arq)
+            if src:
+                df = load_emplacamentos(src, label=arq)
+                if df is not None:
+                    emp_list.append(df)
+        st.session_state.df_emp_list = emp_list
+            
+    if st.session_state.df_area is not None and st.session_state.df_cart is not None and st.session_state.df_emp_list:
+        st.session_state.dados_carregados = True
 
 carregar_dados_se_necessario()
 
-if not st.session_state.get("df_emp_list"):
-    st.error("Não foi possível carregar os dados do GitHub.")
-    st.stop()
-
-    # CARTEIRA
-    if "df_cart" not in st.session_state:
-        st.session_state.df_cart = load_excel_from_github("CARTEIRA VANS.xlsx")
-
-    # EMPLACAMENTOS
-    if "df_emp_list" not in st.session_state:
-
-        arquivos_emp = [
-            "EMPLACAMENTO APP VANS.xlsx"
-        ]
-
-        emp_list = []
-
-        for arq in arquivos_emp:
-
-            df = load_excel_from_github(arq)
-
-            if df is not None:
-                emp_list.append(df)
-
-        st.session_state.df_emp_list = emp_list
-
-# ════════════════════════════════════════════════════════════════
-# LOGIN
-# ════════════════════════════════════════════════════════════════
 if st.session_state.user is None:
     logo_html = logo_img(52) if LOGO_B64 else '<span style="font-size:24px;font-weight:800;color:#0a1628;">Comercial De Nigris</span>'
     st.markdown("""
