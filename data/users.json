@@ -5,13 +5,6 @@
     "nome": "Administrador",
     "ultimo_acesso": "2026-05-21T16:58:35"
   },
-  "PAULA.BORELLI": {
-    "senha_hash": "c9336f144e411fa01f48ff3067d2e53e28332f346cd2fe25b95cbc204f5a2da8",
-    "perfil": "vendedor",
-    "nome": "Paula Borelli",
-    "consultor_key": "MARIA PAULA BORELLI BARBOZA",
-    "ultimo_acesso": null
-  },
   "HADASSA.VASCONCELOS": {
     "senha_hash": "7bbab91205ee605e4ae29a4868906696bb3fdb3d952192255ceb2213c5011f4d",
     "perfil": "vendedor",
