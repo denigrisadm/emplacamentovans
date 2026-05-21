@@ -4,12 +4,5 @@
     "perfil": "gestor",
     "nome": "Administrador",
     "ultimo_acesso": "2026-05-21T16:58:35"
-  },
-  "HADASSA.VASCONCELOS": {
-    "senha_hash": "7bbab91205ee605e4ae29a4868906696bb3fdb3d952192255ceb2213c5011f4d",
-    "perfil": "vendedor",
-    "nome": "Hadassa Vasconcelos",
-    "consultor_key": "HADASSA REGINA PALLONE VASCONCELOS",
-    "ultimo_acesso": "2026-05-21T09:45:50"
   }
 }
