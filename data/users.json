@@ -18,5 +18,12 @@
     "nome": "Ozeni Rodrigues",
     "consultor_key": "OZENI RODRIGUES",
     "ultimo_acesso": null
+  },
+  "HELDER.FARIA": {
+    "senha_hash": "b7517eee997651cde608257ec2312e51abc06c2a2718b9fe39f6d4256967011d",
+    "perfil": "vendedor",
+    "nome": "Helder Faria",
+    "consultor_key": "HELDER FARIA",
+    "ultimo_acesso": null
   }
 }
