@@ -39,5 +39,12 @@
     "nome": "Paula Borelli",
     "consultor_key": "MARIA PAULA BORELLI BARBOZA",
     "ultimo_acesso": null
+  },
+  "HADASSA.VASCONCELOS": {
+    "senha_hash": "7bbab91205ee605e4ae29a4868906696bb3fdb3d952192255ceb2213c5011f4d",
+    "perfil": "vendedor",
+    "nome": "Hadassa Vasconcelos",
+    "consultor_key": "HADASSA REGINA PALLONE VASCONCELOS",
+    "ultimo_acesso": null
   }
 }
