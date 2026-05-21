@@ -11,5 +11,12 @@
     "nome": "Edivanda Fernandes",
     "consultor_key": "EDIVANDA FERNANDES",
     "ultimo_acesso": null
+  },
+  "OZENI.RODRIGUES": {
+    "senha_hash": "0dec3057682ffc664e4920bb80b44a842d554a6dda9a9d13d161038520ce36e4",
+    "perfil": "vendedor",
+    "nome": "Ozeni Rodrigues",
+    "consultor_key": "OZENI RODRIGUES",
+    "ultimo_acesso": null
   }
 }
