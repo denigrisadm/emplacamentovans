@@ -5,13 +5,6 @@
     "nome": "Administrador",
     "ultimo_acesso": "2026-05-21T16:58:35"
   },
-  "OZENI.RODRIGUES": {
-    "senha_hash": "0dec3057682ffc664e4920bb80b44a842d554a6dda9a9d13d161038520ce36e4",
-    "perfil": "vendedor",
-    "nome": "Ozeni Rodrigues",
-    "consultor_key": "OZENI RODRIGUES",
-    "ultimo_acesso": null
-  },
   "HELDER.FARIA": {
     "senha_hash": "b7517eee997651cde608257ec2312e51abc06c2a2718b9fe39f6d4256967011d",
     "perfil": "vendedor",
