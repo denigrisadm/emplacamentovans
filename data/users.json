@@ -32,5 +32,12 @@
     "nome": "Marcia Henkel",
     "consultor_key": "MARCIA HENKEL",
     "ultimo_acesso": null
+  },
+  "PAULA.BORELLI": {
+    "senha_hash": "c9336f144e411fa01f48ff3067d2e53e28332f346cd2fe25b95cbc204f5a2da8",
+    "perfil": "vendedor",
+    "nome": "Paula Borelli",
+    "consultor_key": "MARIA PAULA BORELLI BARBOZA",
+    "ultimo_acesso": null
   }
 }
