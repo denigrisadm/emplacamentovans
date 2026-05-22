@@ -4,5 +4,12 @@
     "perfil": "gestor",
     "nome": "Administrador",
     "ultimo_acesso": "2026-05-22T09:31:59"
+  },
+  "EDIVANDA": {
+    "senha_hash": "dbbe414ad8ffcb364e269f99c75c2065fdc4c07f33f0afeae3344547afe5167f",
+    "perfil": "vendedor",
+    "nome": "EDIVANDA FERNANDES",
+    "consultor_key": "EDIVANDA FERNANDES",
+    "ultimo_acesso": null
   }
 }
