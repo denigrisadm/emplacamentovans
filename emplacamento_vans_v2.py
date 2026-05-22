@@ -483,7 +483,8 @@ def _render_rf_tab(cnpj_sel, last, btn_key):
                 dados, erro = _consultar(cnpj_rf)
             if dados:
                 st.session_state[ss_key] = dados
-                st.rerun()
+                # Não usar st.rerun() aqui — causa loop. O dado já está no session_state
+                # e será exibido logo abaixo na mesma execução.
             else:
                 st.error(f"Erro ao consultar: {erro}. Tente novamente.")
 
@@ -1785,150 +1786,7 @@ if pagina == "busca":
                 st.dataframe(det, use_container_width=True, hide_index=True)
 
             with tab_receita:
-                import urllib.request as _ur, urllib.error as _ue
-
-                cnpj_rf = re.sub(r"\D", "", str(cnpj_sel))
-                nome_rf = safe_str(last.get("NOMEPROPRIETARIO","—"))
-                cnpj_fmt = f"{cnpj_rf[:2]}.{cnpj_rf[2:5]}.{cnpj_rf[5:8]}/{cnpj_rf[8:12]}-{cnpj_rf[12:14]}" if len(cnpj_rf)==14 else cnpj_rf
-
-                def _consultar_cnpj(cnpj14):
-                    for url in [
-                        f"https://publica.cnpj.ws/cnpj/{cnpj14}",
-                        f"https://brasilapi.com.br/api/cnpj/v1/{cnpj14}"
-                    ]:
-                        try:
-                            req = _ur.Request(url, headers={"User-Agent":"Mozilla/5.0"})
-                            with _ur.urlopen(req, timeout=12) as r:
-                                return json.loads(r.read().decode()), ""
-                        except _ue.HTTPError as e:
-                            err = f"HTTP {e.code}"
-                        except Exception as e:
-                            err = str(e)
-                    return None, err
-
-                def _parse_rf(d):
-                    est = d.get("estabelecimento", d)
-                    def sv(v, fb="—"):
-                        if isinstance(v,dict): return v.get("descricao") or v.get("nome") or fb
-                        return str(v).strip() if v and str(v).strip() not in ["None","nan",""] else fb
-                    razao    = sv(d.get("razao_social"))
-                    fantasia = sv(est.get("nome_fantasia") or d.get("nome_fantasia",""))
-                    situacao = sv(est.get("situacao_cadastral") or d.get("situacao",""))
-                    abertura = sv(est.get("data_inicio_atividade") or d.get("abertura",""))
-                    capital  = sv(d.get("capital_social",""))
-                    porte    = sv(d.get("porte",""))
-                    nat_jur  = sv(d.get("natureza_juridica",""))
-                    atv_raw  = est.get("atividade_principal") or d.get("atividade_principal",{})
-                    if isinstance(atv_raw,dict):   atividade = f"{sv(atv_raw.get('subclasse',''))} — {sv(atv_raw.get('descricao',''))}"
-                    elif isinstance(atv_raw,list) and atv_raw: atividade = atv_raw[0].get("text", atv_raw[0].get("descricao","—"))
-                    else: atividade = "—"
-                    end_rf   = " ".join(filter(None,[sv(est.get("tipo_logradouro","")),sv(est.get("logradouro","")),
-                                                      sv(est.get("numero","")),sv(est.get("complemento","")),
-                                                      sv(est.get("bairro",""))])).strip() or "—"
-                    cidade_rf = sv(est.get("cidade",{}) or est.get("municipio",""))
-                    uf_rf    = sv(est.get("estado",{}) or est.get("uf",""))
-                    cep_rf   = sv(est.get("cep",""))
-                    socios   = d.get("socios") or d.get("qsa") or est.get("socios",[]) or []
-                    return dict(razao=razao,fantasia=fantasia,situacao=situacao,abertura=abertura,
-                                capital=capital,porte=porte,nat_jur=nat_jur,atividade=atividade,
-                                end_rf=end_rf,cidade_rf=cidade_rf,uf_rf=uf_rf,cep_rf=cep_rf,socios=socios)
-
-                col_btn_rf, col_info_rf = st.columns([2,3])
-                with col_btn_rf:
-                    btn_rf = st.button("🔎 Consultar Receita Federal", use_container_width=True, key="btn_receita")
-                with col_info_rf:
-                    st.markdown(f'<div style="padding:8px 12px;background:#f0f8ff;border-radius:8px;font-size:12px;color:#4a5568;">CNPJ: <strong>{cnpj_fmt}</strong> · {nome_rf}</div>', unsafe_allow_html=True)
-
-                if btn_rf:
-                    if len(cnpj_rf) != 14:
-                        st.warning("CNPJ inválido para consulta.")
-                    else:
-                        with st.spinner("Consultando Receita Federal..."):
-                            dados_rf, erro_rf = _consultar_cnpj(cnpj_rf)
-                        if dados_rf:
-                            st.session_state[f"rf_{cnpj_rf}"] = dados_rf
-                        else:
-                            st.error(f"Erro: {erro_rf}. Tente novamente em alguns instantes.")
-
-                dados_rf = st.session_state.get(f"rf_{cnpj_rf}")
-
-                if dados_rf:
-                    p = _parse_rf(dados_rf)
-                    cor_sit = "#1E7E34" if "ATIVA" in p["situacao"].upper() else "#C0392B"
-                    try: cap_fmt = f"R$ {float(str(p['capital']).replace(',','.').replace('.','',p['capital'].count('.')-1)):,.2f}".replace(",","X").replace(".",",").replace("X",".") if p["capital"] not in ["—",""] else "—"
-                    except: cap_fmt = f"R$ {p['capital']}"
-
-                    st.markdown(f"""
-                    <div style="background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:20px;margin-bottom:16px;box-shadow:0 2px 8px rgba(0,0,0,0.06);">
-                        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;">
-                            <div>
-                                <div style="font-size:15px;font-weight:700;color:#0a1628;">{p["razao"]}</div>
-                                {"<div style='font-size:12px;color:#8a95b0;margin-top:2px;'>"+p["fantasia"]+"</div>" if p["fantasia"] not in ["—",""] and p["fantasia"]!=p["razao"] else ""}
-                                <div style="font-size:11px;color:#8a95b0;margin-top:4px;font-family:monospace;">{cnpj_fmt}</div>
-                            </div>
-                            <div style="background:{cor_sit};color:#fff;padding:5px 14px;border-radius:20px;font-size:12px;font-weight:600;white-space:nowrap;">
-                                ● {p["situacao"]}
-                            </div>
-                        </div>
-                        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;font-size:12px;margin-bottom:12px;">
-                            <div style="background:#f8fafc;padding:10px;border-radius:8px;">
-                                <div style="color:#8a95b0;font-size:10px;margin-bottom:3px;">DATA DE ABERTURA</div>
-                                <div style="font-weight:600;color:#0a1628;">{p["abertura"]}</div>
-                            </div>
-                            <div style="background:#f8fafc;padding:10px;border-radius:8px;">
-                                <div style="color:#8a95b0;font-size:10px;margin-bottom:3px;">CAPITAL SOCIAL</div>
-                                <div style="font-weight:600;color:#0a1628;">{cap_fmt}</div>
-                            </div>
-                            <div style="background:#f8fafc;padding:10px;border-radius:8px;">
-                                <div style="color:#8a95b0;font-size:10px;margin-bottom:3px;">PORTE</div>
-                                <div style="font-weight:600;color:#0a1628;">{p["porte"]}</div>
-                            </div>
-                            <div style="background:#f8fafc;padding:10px;border-radius:8px;">
-                                <div style="color:#8a95b0;font-size:10px;margin-bottom:3px;">NATUREZA JURÍDICA</div>
-                                <div style="font-weight:600;color:#0a1628;">{p["nat_jur"]}</div>
-                            </div>
-                            <div style="background:#f8fafc;padding:10px;border-radius:8px;grid-column:span 2;">
-                                <div style="color:#8a95b0;font-size:10px;margin-bottom:3px;">ATIVIDADE PRINCIPAL</div>
-                                <div style="font-weight:600;color:#0a1628;">{p["atividade"][:80]}</div>
-                            </div>
-                        </div>
-                        <div style="background:#f8fafc;padding:10px;border-radius:8px;font-size:12px;">
-                            <span style="color:#8a95b0;font-size:10px;">ENDEREÇO</span><br>
-                            <strong>{p["end_rf"]}</strong>
-                            {"<br><span style='color:#8a95b0;'>"+p["cidade_rf"]+" — "+p["uf_rf"]+" · CEP "+p["cep_rf"]+"</span>" if p["cidade_rf"]!="—" else ""}
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-
-                    st.markdown('<div class="sec-title">🤝 Quadro Societário</div>', unsafe_allow_html=True)
-                    socios_rf = p["socios"]
-                    if socios_rf:
-                        for i, s in enumerate(socios_rf):
-                            nome_s  = s.get("nome") or s.get("nome_socio","—")
-                            qual_s  = s.get("qualificacao_socio",{}).get("descricao","") if isinstance(s.get("qualificacao_socio"),dict) else s.get("qual","Sócio")
-                            cpf_s   = s.get("cpf_representante_legal") or s.get("cnpj_cpf_do_socio","")
-                            desde_s = s.get("data_entrada_sociedade","—")
-                            cpf_show = cpf_s if cpf_s else "CPF não divulgado"
-                            st.markdown(f"""
-                            <div style="background:#f8fafc;border:1px solid #e2e8f0;border-left:4px solid #c8a84b;
-                                        border-radius:8px;padding:12px 16px;margin-bottom:8px;">
-                                <div style="font-weight:700;font-size:13px;color:#0a1628;">👤 {nome_s}</div>
-                                <div style="font-size:11px;color:#8a95b0;margin-top:3px;">{qual_s} · Desde {desde_s}</div>
-                                <div style="font-size:11px;color:#4a5568;margin-top:3px;font-family:monospace;">{cpf_show}</div>
-                            </div>
-                            """, unsafe_allow_html=True)
-                    else:
-                        st.info("Nenhum sócio encontrado na base pública da Receita Federal.")
-                    st.markdown('<div style="font-size:10px;color:#b0b8cc;margin-top:16px;text-align:center;">Fonte: API pública CNPJ.ws / BrasilAPI · Dados da Receita Federal do Brasil</div>', unsafe_allow_html=True)
-                else:
-                    st.markdown("""
-                    <div style="text-align:center;padding:48px 20px;color:#8a95b0;">
-                        <div style="font-size:48px;margin-bottom:16px;">🏢</div>
-                        <div style="font-size:15px;font-weight:600;color:#4a5568;margin-bottom:8px;">Dados da Receita Federal</div>
-                        <div style="font-size:13px;">Clique em <strong>Consultar Receita Federal</strong> para buscar<br>
-                        situação cadastral, sócios e dados públicos da empresa.</div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                _render_rf_tab(cnpj_sel, last, btn_key="btn_receita")
 
     elif buscar and not q:
         st.warning("Digite algo para buscar.")
@@ -1990,150 +1848,7 @@ if pagina == "busca":
             tab_cad2, tab_contatos2, tab_socios2, tab_hist2, tab_receita2 = st.tabs(["📋 Cadastro","📞 Contatos","🤝 Sócios","📈 Histórico","🏢 Receita Federal"])
 
             with tab_receita2:
-                import urllib.request as _ur2, urllib.error as _ue2
-
-                cnpj_rf = re.sub(r"\D", "", str(cnpj_sel))
-                nome_rf = safe_str(last.get("NOMEPROPRIETARIO","—"))
-                cnpj_fmt = f"{cnpj_rf[:2]}.{cnpj_rf[2:5]}.{cnpj_rf[5:8]}/{cnpj_rf[8:12]}-{cnpj_rf[12:14]}" if len(cnpj_rf)==14 else cnpj_rf
-
-                def _consultar_cnpj2(cnpj14):
-                    for url in [
-                        f"https://publica.cnpj.ws/cnpj/{cnpj14}",
-                        f"https://brasilapi.com.br/api/cnpj/v1/{cnpj14}"
-                    ]:
-                        try:
-                            req = _ur2.Request(url, headers={"User-Agent":"Mozilla/5.0"})
-                            with _ur2.urlopen(req, timeout=12) as r:
-                                return json.loads(r.read().decode()), ""
-                        except _ue2.HTTPError as e:
-                            err = f"HTTP {e.code}"
-                        except Exception as e:
-                            err = str(e)
-                    return None, err
-
-                def _parse_rf2(d):
-                    est = d.get("estabelecimento", d)
-                    def sv(v, fb="—"):
-                        if isinstance(v,dict): return v.get("descricao") or v.get("nome") or fb
-                        return str(v).strip() if v and str(v).strip() not in ["None","nan",""] else fb
-                    razao    = sv(d.get("razao_social"))
-                    fantasia = sv(est.get("nome_fantasia") or d.get("nome_fantasia",""))
-                    situacao = sv(est.get("situacao_cadastral") or d.get("situacao",""))
-                    abertura = sv(est.get("data_inicio_atividade") or d.get("abertura",""))
-                    capital  = sv(d.get("capital_social",""))
-                    porte    = sv(d.get("porte",""))
-                    nat_jur  = sv(d.get("natureza_juridica",""))
-                    atv_raw  = est.get("atividade_principal") or d.get("atividade_principal",{})
-                    if isinstance(atv_raw,dict):   atividade = f"{sv(atv_raw.get('subclasse',''))} — {sv(atv_raw.get('descricao',''))}"
-                    elif isinstance(atv_raw,list) and atv_raw: atividade = atv_raw[0].get("text", atv_raw[0].get("descricao","—"))
-                    else: atividade = "—"
-                    end_rf   = " ".join(filter(None,[sv(est.get("tipo_logradouro","")),sv(est.get("logradouro","")),
-                                                      sv(est.get("numero","")),sv(est.get("complemento","")),
-                                                      sv(est.get("bairro",""))])).strip() or "—"
-                    cidade_rf = sv(est.get("cidade",{}) or est.get("municipio",""))
-                    uf_rf    = sv(est.get("estado",{}) or est.get("uf",""))
-                    cep_rf   = sv(est.get("cep",""))
-                    socios   = d.get("socios") or d.get("qsa") or est.get("socios",[]) or []
-                    return dict(razao=razao,fantasia=fantasia,situacao=situacao,abertura=abertura,
-                                capital=capital,porte=porte,nat_jur=nat_jur,atividade=atividade,
-                                end_rf=end_rf,cidade_rf=cidade_rf,uf_rf=uf_rf,cep_rf=cep_rf,socios=socios)
-
-                col_btn_rf2, col_info_rf2 = st.columns([2,3])
-                with col_btn_rf2:
-                    btn_rf2 = st.button("🔎 Consultar Receita Federal", use_container_width=True, key="btn_receita2")
-                with col_info_rf2:
-                    st.markdown(f'<div style="padding:8px 12px;background:#f0f8ff;border-radius:8px;font-size:12px;color:#4a5568;">CNPJ: <strong>{cnpj_fmt}</strong> · {nome_rf}</div>', unsafe_allow_html=True)
-
-                if btn_rf2:
-                    if len(cnpj_rf) != 14:
-                        st.warning("CNPJ inválido para consulta.")
-                    else:
-                        with st.spinner("Consultando Receita Federal..."):
-                            dados_rf2, erro_rf2 = _consultar_cnpj2(cnpj_rf)
-                        if dados_rf2:
-                            st.session_state[f"rf_{cnpj_rf}"] = dados_rf2
-                        else:
-                            st.error(f"Erro: {erro_rf2}. Tente novamente.")
-
-                dados_rf2 = st.session_state.get(f"rf_{cnpj_rf}")
-
-                if dados_rf2:
-                    p2 = _parse_rf2(dados_rf2)
-                    cor_sit2 = "#1E7E34" if "ATIVA" in p2["situacao"].upper() else "#C0392B"
-                    try: cap_fmt2 = f"R$ {float(str(p2['capital']).replace(',','.').replace('.','',p2['capital'].count('.')-1)):,.2f}".replace(",","X").replace(".",",").replace("X",".") if p2["capital"] not in ["—",""] else "—"
-                    except: cap_fmt2 = f"R$ {p2['capital']}"
-
-                    st.markdown(f"""
-                    <div style="background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:20px;margin-bottom:16px;box-shadow:0 2px 8px rgba(0,0,0,0.06);">
-                        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;">
-                            <div>
-                                <div style="font-size:15px;font-weight:700;color:#0a1628;">{p2["razao"]}</div>
-                                {"<div style='font-size:12px;color:#8a95b0;margin-top:2px;'>"+p2["fantasia"]+"</div>" if p2["fantasia"] not in ["—",""] and p2["fantasia"]!=p2["razao"] else ""}
-                                <div style="font-size:11px;color:#8a95b0;margin-top:4px;font-family:monospace;">{cnpj_fmt}</div>
-                            </div>
-                            <div style="background:{cor_sit2};color:#fff;padding:5px 14px;border-radius:20px;font-size:12px;font-weight:600;white-space:nowrap;">
-                                ● {p2["situacao"]}
-                            </div>
-                        </div>
-                        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;font-size:12px;margin-bottom:12px;">
-                            <div style="background:#f8fafc;padding:10px;border-radius:8px;">
-                                <div style="color:#8a95b0;font-size:10px;margin-bottom:3px;">DATA DE ABERTURA</div>
-                                <div style="font-weight:600;color:#0a1628;">{p2["abertura"]}</div>
-                            </div>
-                            <div style="background:#f8fafc;padding:10px;border-radius:8px;">
-                                <div style="color:#8a95b0;font-size:10px;margin-bottom:3px;">CAPITAL SOCIAL</div>
-                                <div style="font-weight:600;color:#0a1628;">{cap_fmt2}</div>
-                            </div>
-                            <div style="background:#f8fafc;padding:10px;border-radius:8px;">
-                                <div style="color:#8a95b0;font-size:10px;margin-bottom:3px;">PORTE</div>
-                                <div style="font-weight:600;color:#0a1628;">{p2["porte"]}</div>
-                            </div>
-                            <div style="background:#f8fafc;padding:10px;border-radius:8px;">
-                                <div style="color:#8a95b0;font-size:10px;margin-bottom:3px;">NATUREZA JURÍDICA</div>
-                                <div style="font-weight:600;color:#0a1628;">{p2["nat_jur"]}</div>
-                            </div>
-                            <div style="background:#f8fafc;padding:10px;border-radius:8px;grid-column:span 2;">
-                                <div style="color:#8a95b0;font-size:10px;margin-bottom:3px;">ATIVIDADE PRINCIPAL</div>
-                                <div style="font-weight:600;color:#0a1628;">{p2["atividade"][:80]}</div>
-                            </div>
-                        </div>
-                        <div style="background:#f8fafc;padding:10px;border-radius:8px;font-size:12px;">
-                            <span style="color:#8a95b0;font-size:10px;">ENDEREÇO</span><br>
-                            <strong>{p2["end_rf"]}</strong>
-                            {"<br><span style='color:#8a95b0;'>"+p2["cidade_rf"]+" — "+p2["uf_rf"]+" · CEP "+p2["cep_rf"]+"</span>" if p2["cidade_rf"]!="—" else ""}
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-
-                    st.markdown('<div class="sec-title">🤝 Quadro Societário</div>', unsafe_allow_html=True)
-                    socios_rf2 = p2["socios"]
-                    if socios_rf2:
-                        for si, s2 in enumerate(socios_rf2):
-                            nome_s2  = s2.get("nome") or s2.get("nome_socio","—")
-                            qual_s2  = s2.get("qualificacao_socio",{}).get("descricao","") if isinstance(s2.get("qualificacao_socio"),dict) else s2.get("qual","Sócio")
-                            cpf_s2   = s2.get("cpf_representante_legal") or s2.get("cnpj_cpf_do_socio","")
-                            desde_s2 = s2.get("data_entrada_sociedade","—")
-                            cpf_show2 = cpf_s2 if cpf_s2 else "CPF não divulgado"
-                            st.markdown(f"""
-                            <div style="background:#f8fafc;border:1px solid #e2e8f0;border-left:4px solid #c8a84b;
-                                        border-radius:8px;padding:12px 16px;margin-bottom:8px;">
-                                <div style="font-weight:700;font-size:13px;color:#0a1628;">👤 {nome_s2}</div>
-                                <div style="font-size:11px;color:#8a95b0;margin-top:3px;">{qual_s2} · Desde {desde_s2}</div>
-                                <div style="font-size:11px;color:#4a5568;margin-top:3px;font-family:monospace;">{cpf_show2}</div>
-                            </div>
-                            """, unsafe_allow_html=True)
-                    else:
-                        st.info("Nenhum sócio encontrado na base pública da Receita Federal.")
-                    st.markdown('<div style="font-size:10px;color:#b0b8cc;margin-top:16px;text-align:center;">Fonte: API pública CNPJ.ws / BrasilAPI · Dados da Receita Federal do Brasil</div>', unsafe_allow_html=True)
-                else:
-                    st.markdown("""
-                    <div style="text-align:center;padding:48px 20px;color:#8a95b0;">
-                        <div style="font-size:48px;margin-bottom:16px;">🏢</div>
-                        <div style="font-size:15px;font-weight:600;color:#4a5568;margin-bottom:8px;">Dados da Receita Federal</div>
-                        <div style="font-size:13px;">Clique em <strong>Consultar Receita Federal</strong> para buscar<br>
-                        situação cadastral, sócios e dados públicos da empresa.</div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                _render_rf_tab(cnpj_sel, last, btn_key="btn_receita_restore")
 
             with tab_cad2:
                 end_parts = [safe_str(last.get(c,""),"") for c in ["TP_LOGR","NO_LOGR","NU_LOGR","NO_COMPL","NO_BAIRRO"]]
@@ -2480,54 +2195,66 @@ elif pagina == "carteira":
 
     today = pd.Timestamp.now()
 
-    # ── Lógica de Atribuição Dinâmica para a Carteira ──
-    vendedores_ativos = get_vendedores_ativos()
-    
-    # Criar uma visão expandida da carteira que inclui a atribuição dinâmica
-    # 1. Pegar todos os CNPJs que tiveram emplacamentos
-    if df_emp is not None:
-        todos_cnpjs = df_emp["CNPJ_NORM"].unique()
-        df_dist = pd.DataFrame({"CNPJ_NORM": todos_cnpjs})
-        
-        # 2. Cruzar com a carteira atual
-        df_dist = df_dist.merge(df_cart[["CNPJ_NORM", "VENDEDOR", "Nome", "CPF/CNPJ", "Classificação Mercedes"]], on="CNPJ_NORM", how="left")
-        
-        # 3. Aplicar a regra de vendedor final para todos
-        def atribuir(row):
-            # Se já tem vendedor na carteira, mantém
-            v_cart = safe_str(row.get("VENDEDOR", ""), "").strip()
-            if v_cart and v_cart != "—":
-                return v_cart
-            # Se não, distribui
-            return get_consultor_distribuido(row["CNPJ_NORM"], vendedores_ativos)
-        
-        df_dist["VENDEDOR_FINAL"] = df_dist.apply(atribuir, axis=1)
-        
-        # 4. Recuperar nomes de quem não estava na carteira (pegar do emplacamento)
-        # (Isso garante que a carteira mostre também os "não cadastrados" atribuídos ao vendedor)
-        nomes_emp = df_emp.sort_values("Data emplacamento").groupby("CNPJ_NORM").last()[["NOMEPROPRIETARIO", "CPFCNPJPROPRIETARIO"]]
-        df_dist = df_dist.merge(nomes_emp, on="CNPJ_NORM", how="left")
-        df_dist["Nome"] = df_dist["Nome"].fillna(df_dist["NOMEPROPRIETARIO"])
-        df_dist["CPF/CNPJ"] = df_dist["CPF/CNPJ"].fillna(df_dist["CPFCNPJPROPRIETARIO"])
-        df_dist["VENDEDOR"] = df_dist["VENDEDOR_FINAL"]
-    else:
-        df_dist = df_cart.copy()
-
     # Filtrar por consultor (vendedor vê só a sua)
     if perfil in ("gestor","gerente"):
-        vends = ["Todos"] + sorted(df_dist["VENDEDOR"].dropna().unique().tolist())
+        vends = ["Todos"] + sorted(df_cart["VENDEDOR"].dropna().unique().tolist())
         sel_vend = st.selectbox("Vendedor:", vends)
-        cart_view = df_dist.copy() if sel_vend == "Todos" else df_dist[df_dist["VENDEDOR"] == sel_vend].copy()
+        cart_view = df_cart.copy() if sel_vend == "Todos" else df_cart[df_cart["VENDEDOR"] == sel_vend].copy()
     else:
-        # vendedor vê sua carteira pelo nome (atribuição dinâmica inclusa)
-        cart_view = df_dist[norm_str_series(df_dist["VENDEDOR"]) == norm_str(cons_key)].copy()
+        cart_view = df_cart[norm_str_series(df_cart["VENDEDOR"]) == norm_str(cons_key)].copy()
+        if cart_view.empty:
+            cart_view = df_cart[df_cart["VENDEDOR"].str.upper().str.strip() == cons_key.upper().strip()].copy()
+
+    # ── Adicionar clientes NÃO CADASTRADOS distribuídos para este vendedor ──
+    if df_emp is not None:
+        vendedores_ativos_cart = get_vendedores_ativos()
+        cnpjs_na_carteira_total = set(df_cart["CNPJ_NORM"].dropna().unique())
+        cnpjs_sem_cart = [c for c in df_emp["CNPJ_NORM"].unique() if c not in cnpjs_na_carteira_total]
+
+        if perfil == "vendedor":
+            # Clientes não cadastrados distribuídos para este vendedor
+            meus_nc = [c for c in cnpjs_sem_cart
+                       if get_consultor_distribuido(str(c), vendedores_ativos_cart) == cons_key]
+            if meus_nc:
+                nomes_nc = (df_emp[df_emp["CNPJ_NORM"].isin(meus_nc)]
+                            .sort_values("Data emplacamento")
+                            .groupby("CNPJ_NORM")
+                            .last()[["NOMEPROPRIETARIO","CPFCNPJPROPRIETARIO"]]
+                            .reset_index()
+                            .rename(columns={"NOMEPROPRIETARIO":"Nome","CPFCNPJPROPRIETARIO":"CPF/CNPJ"}))
+                nomes_nc["VENDEDOR"] = cons_key
+                nomes_nc["Classificação Mercedes"] = "NÃO CADASTRADO"
+                cart_view = pd.concat([cart_view, nomes_nc], ignore_index=True)
+        elif perfil in ("gestor","gerente") and (sel_vend == "Todos" or True):
+            # Para gestor/gerente: distribuir todos os não cadastrados e mostrar por vendedor
+            rows_nc = []
+            for c in cnpjs_sem_cart:
+                vend_nc = get_consultor_distribuido(str(c), vendedores_ativos_cart)
+                rows_nc.append({"CNPJ_NORM": c, "VENDEDOR_NC": vend_nc})
+            if rows_nc:
+                df_nc = pd.DataFrame(rows_nc)
+                # Se filtro específico de vendedor, filtrar
+                if perfil in ("gestor","gerente") and sel_vend != "Todos":
+                    df_nc = df_nc[df_nc["VENDEDOR_NC"] == sel_vend]
+                if not df_nc.empty:
+                    nomes_nc2 = (df_emp[df_emp["CNPJ_NORM"].isin(df_nc["CNPJ_NORM"].tolist())]
+                                 .sort_values("Data emplacamento")
+                                 .groupby("CNPJ_NORM")
+                                 .last()[["NOMEPROPRIETARIO","CPFCNPJPROPRIETARIO"]]
+                                 .reset_index()
+                                 .rename(columns={"NOMEPROPRIETARIO":"Nome","CPFCNPJPROPRIETARIO":"CPF/CNPJ"}))
+                    nomes_nc2 = nomes_nc2.merge(df_nc, on="CNPJ_NORM", how="left")
+                    nomes_nc2["VENDEDOR"] = nomes_nc2["VENDEDOR_NC"]
+                    nomes_nc2["Classificação Mercedes"] = "NÃO CADASTRADO"
+                    nomes_nc2 = nomes_nc2.drop(columns=["VENDEDOR_NC"])
+                    cart_view = pd.concat([cart_view, nomes_nc2], ignore_index=True)
 
     total_cart = len(cart_view)
 
     # Cruzar com emplacamentos para saber última compra
     if df_emp is not None:
         ultima_emp = df_emp.groupby("CNPJ_NORM")["Data emplacamento"].max().reset_index()
-        ultima_emp = ultima_emp.rename(columns={ultima_emp.columns[0]:"CNPJ_NORM", ultima_emp.columns[1]:"UltimaCompra"})
+        ultima_emp.columns = ["CNPJ_NORM","UltimaCompra"]
         cart_view = cart_view.merge(ultima_emp, on="CNPJ_NORM", how="left")
         def calc_meses(x):
             try:
@@ -2542,11 +2269,8 @@ elif pagina == "carteira":
 
     cart_view["MesesSem"] = pd.to_numeric(cart_view["MesesSem"], errors="coerce").fillna(999).astype(int)
     inativos_2a = cart_view[cart_view["MesesSem"] > 48]
-    top_compradores = cart_view[cart_view["MesesSem"] <= 24].sort_values("MesesSem")
 
     # KPIs
-    st.markdown('<div class="kpi-grid">', unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
     k1,k2,k3,k4 = st.columns(4)
     with k1: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Total Carteira</div><div class="kpi-value">{total_cart}</div></div>', unsafe_allow_html=True)
     with k2: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Inativos +4 anos</div><div class="kpi-value red">{len(inativos_2a)}</div><div class="kpi-sub">Para revisão</div></div>', unsafe_allow_html=True)
@@ -2565,11 +2289,10 @@ elif pagina == "carteira":
         cols_in = [c for c in cols_in if c in inativos_2a.columns]
         inativos_show = inativos_2a[cols_in].copy()
         if "UltimaCompra" in inativos_show.columns:
-            inativos_show["UltimaCompra"] = pd.to_datetime(inativos_show["UltimaCompra"]).dt.strftime("%d/%m/%Y").fillna("Nunca")
+            inativos_show["UltimaCompra"] = pd.to_datetime(inativos_show["UltimaCompra"], errors="coerce").dt.strftime("%d/%m/%Y").fillna("Nunca")
         inativos_show["MesesSem"] = inativos_show["MesesSem"].apply(lambda x: f"{x} meses" if x < 999 else "Sem registro")
         st.dataframe(inativos_show, use_container_width=True, hide_index=True)
 
-        # Exportar sinalizado
         inativos_export = inativos_2a.copy()
         inativos_export["STATUS"] = "INATIVO +4 ANOS — REVISAR CARTEIRA"
         buf = BytesIO()
@@ -2598,6 +2321,23 @@ elif pagina == "carteira":
             "UltimaCompra":"Última Compra","Marca":"Marca"})
         top_c.insert(0,"#",range(1,len(top_c)+1))
         st.dataframe(top_c, use_container_width=True, hide_index=True)
+
+    # NÃO CADASTRADOS distribuídos — resumo por vendedor (só gestor/gerente)
+    if perfil in ("gestor","gerente") and df_emp is not None:
+        cnpjs_na_cart2 = set(df_cart["CNPJ_NORM"].dropna().unique())
+        nc_count = sum(1 for c in df_emp["CNPJ_NORM"].unique() if c not in cnpjs_na_cart2)
+        if nc_count > 0:
+            st.markdown('<div class="sec-title">⚖️ Distribuição de Clientes Sem Cadastro</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="alert-blue">ℹ️ <strong>{nc_count} clientes sem cadastro</strong> distribuídos igualmente entre os vendedores ativos por hash de CNPJ (determinístico — mesmo cliente sempre vai ao mesmo vendedor).</div>', unsafe_allow_html=True)
+            vends_ativ2 = get_vendedores_ativos()
+            dist_count = {v: 0 for v in vends_ativ2}
+            for c in df_emp["CNPJ_NORM"].unique():
+                if c not in cnpjs_na_cart2:
+                    v = get_consultor_distribuido(str(c), vends_ativ2)
+                    if v in dist_count:
+                        dist_count[v] += 1
+            df_dist_show = pd.DataFrame(list(dist_count.items()), columns=["Vendedor","Clientes Não Cadastrados"]).sort_values("Clientes Não Cadastrados", ascending=False)
+            st.dataframe(df_dist_show, use_container_width=True, hide_index=True)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # PÁGINA: PAINEL GERAL
@@ -3073,37 +2813,40 @@ elif pagina == "oportunidades":
 
     if df_emp is None: st.warning("⚠️ Dados não carregados."); st.stop()
 
-    today = pd.Timestamp.now(); ano_a = today.year
-    df_opp = df_emp.copy()
+    today = pd.Timestamp.now()
 
     if perfil == "vendedor":
-        # Vendedor vê apenas clientes atribuídos a ele (carteira + distribuição dinâmica)
         vendedores_ativos_opp = get_vendedores_ativos()
+        cnpjs_minha_cart = set()
         if df_cart is not None:
             cnpjs_minha_cart = set(df_cart[norm_str_series(df_cart["VENDEDOR"]) == norm_str(cons_key)]["CNPJ_NORM"].dropna())
-        else:
-            cnpjs_minha_cart = set()
-        # CNPJs distribuídos para este vendedor
-        todos_cnpjs_emp = df_emp["CNPJ_NORM"].unique()
-        cnpjs_dist = {c for c in todos_cnpjs_emp
-                      if c not in cnpjs_minha_cart and
-                      get_consultor_distribuido(str(c), vendedores_ativos_opp) == cons_key}
+        cnpjs_na_cart_total = set(df_cart["CNPJ_NORM"].dropna().unique()) if df_cart is not None else set()
+        n_vends = max(len(vendedores_ativos_opp), 1)
+        idx_meu = vendedores_ativos_opp.index(cons_key) if cons_key in vendedores_ativos_opp else 0
+        cnpjs_dist = set()
+        for c in df_emp["CNPJ_NORM"].unique():
+            if c not in cnpjs_na_cart_total:
+                h = int(hashlib.md5(str(c).encode()).hexdigest(), 16)
+                if h % n_vends == idx_meu:
+                    cnpjs_dist.add(c)
         meus_cnpjs = cnpjs_minha_cart | cnpjs_dist
         df_opp = df_emp[df_emp["CNPJ_NORM"].isin(meus_cnpjs)].copy()
-        st.markdown(f'<div class="alert-blue">📍 Exibindo sua carteira: <strong>{cons_key.title()}</strong></div>', unsafe_allow_html=True)
-    elif perfil in ("gerente", "gestor"):
-        # Gestor/gerente vê tudo — sem filtro de área
+        st.markdown(f'<div class="alert-blue">📍 Sua carteira + distribuídos: <strong>{cons_key.title()}</strong> ({len(meus_cnpjs)} clientes)</div>', unsafe_allow_html=True)
+    else:
         df_opp = df_emp.copy()
 
-    tab1,tab2,tab3 = st.tabs(["🔴 Inativos +12m","🔥 Próxima Compra","⚠️ Concorrente"])
+    tab1, tab2, tab3 = st.tabs(["🔴 Inativos +12m","🔥 Próxima Compra","⚠️ Concorrente"])
 
     with tab1:
         ul = df_opp.groupby("CNPJ_NORM")["Data emplacamento"].max().reset_index()
-        ul = ul.rename(columns={ul.columns[0]:"CNPJ_NORM", ul.columns[1]:"UltimaCompra"})
+        ul.columns = ["CNPJ_NORM","UltimaCompra"]
         tc2 = df_opp.groupby("CNPJ_NORM").size().reset_index(name="TotalCompras")
-        inf = df_opp.groupby("CNPJ_NORM").agg(Nome=("NOMEPROPRIETARIO","first"),CNPJ=("CPFCNPJPROPRIETARIO","first"),Cidade=("NO_CIDADE","first")).reset_index()
-        di = ul.merge(tc2,on="CNPJ_NORM").merge(inf,on="CNPJ_NORM")
-        di = di[di["UltimaCompra"].notna()].copy()
+        inf = df_opp.groupby("CNPJ_NORM").agg(
+            Nome=("NOMEPROPRIETARIO","first"),
+            CNPJ=("CPFCNPJPROPRIETARIO","first"),
+            Cidade=("NO_CIDADE","first")
+        ).reset_index()
+        di = ul.merge(tc2, on="CNPJ_NORM").merge(inf, on="CNPJ_NORM")
         di["UltimaCompra"] = pd.to_datetime(di["UltimaCompra"], errors="coerce")
         di = di[di["UltimaCompra"].notna()].copy()
         def _meses_desde(x):
@@ -3118,49 +2861,70 @@ elif pagina == "oportunidades":
             vm = df_cart.set_index("CNPJ_NORM")["VENDEDOR"].to_dict()
             di["Vendedor"] = di["CNPJ_NORM"].map(vm).fillna("—")
         st.markdown(f'<div class="alert-red">🚨 <strong>{len(di)} clientes</strong> há mais de 12 meses sem comprar</div>', unsafe_allow_html=True)
-        _di_cols = [c for c in ["Nome","CNPJ","Cidade","UltimaCompra","Meses","TotalCompras"] if c in di.columns]
-        di_s = di[_di_cols].copy()
+        di_s = di[["Nome","CNPJ","Cidade","UltimaCompra","Meses","TotalCompras"]].copy()
         di_s["UltimaCompra"] = di_s["UltimaCompra"].dt.strftime("%d/%m/%Y")
         di_s = di_s.rename(columns={"UltimaCompra":"Última Compra","Meses":"Meses Sem","TotalCompras":"Total Compras"})
         st.dataframe(di_s, use_container_width=True, hide_index=True)
-        buf=BytesIO(); di_s.to_excel(buf,index=False,engine="openpyxl"); buf.seek(0)
-        st.download_button("📥 Exportar", buf, file_name="inativos.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        if not di_s.empty:
+            buf_i = BytesIO(); di_s.to_excel(buf_i, index=False, engine="openpyxl"); buf_i.seek(0)
+            st.download_button("📥 Exportar", buf_i, file_name="inativos.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     with tab2:
-        quentes=[]
+        quentes = []
         for cnpj_opp, grp_opp in df_opp.groupby("CNPJ_NORM"):
             dts_opp = grp_opp["Data emplacamento"].dropna().tolist()
-            if len(dts_opp)>=2:
-                pl_opp, pred_dt_opp = calc_prediction(dts_opp)
-                if pred_dt_opp is not None:
-                    try:
+            if len(dts_opp) >= 2:
+                try:
+                    pl_opp, pred_dt_opp = calc_prediction(dts_opp)
+                    if pred_dt_opp is not None:
                         dm_opp = relativedelta(pred_dt_opp, today)
-                        m_opp = dm_opp.years*12 + dm_opp.months
-                        if -1<=m_opp<=3:
-                            r_opp = grp_opp.sort_values("Data emplacamento",ascending=False).iloc[0]
-                            quentes.append({"Nome":r_opp["NOMEPROPRIETARIO"],"CNPJ":r_opp["CPFCNPJPROPRIETARIO"],"Cidade":r_opp["NO_CIDADE"],"Previsão":pl_opp,"Meses":m_opp,"Total":len(grp_opp)})
-                    except Exception:
-                        pass
+                        m_opp = dm_opp.years * 12 + dm_opp.months
+                        if -1 <= m_opp <= 3:
+                            r_opp = grp_opp.sort_values("Data emplacamento", ascending=False).iloc[0]
+                            quentes.append({
+                                "Nome": r_opp["NOMEPROPRIETARIO"],
+                                "CNPJ": r_opp["CPFCNPJPROPRIETARIO"],
+                                "Cidade": r_opp["NO_CIDADE"],
+                                "Previsão": pl_opp,
+                                "Meses": m_opp,
+                                "Total": len(grp_opp)
+                            })
+                except Exception:
+                    pass
         if quentes:
-            dq=pd.DataFrame(quentes).sort_values("Meses")
+            dq = pd.DataFrame(quentes).sort_values("Meses")
             st.markdown(f'<div class="alert-green">🔥 <strong>{len(dq)} clientes</strong> com previsão de compra nos próximos 90 dias</div>', unsafe_allow_html=True)
             st.dataframe(dq, use_container_width=True, hide_index=True)
-            buf=BytesIO(); dq.to_excel(buf,index=False,engine="openpyxl"); buf.seek(0)
-            st.download_button("📥 Exportar", buf, file_name="prospects.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-        else: st.info("Nenhum prospect quente no momento.")
+            buf_q = BytesIO(); dq.to_excel(buf_q, index=False, engine="openpyxl"); buf_q.seek(0)
+            st.download_button("📥 Exportar", buf_q, file_name="prospects.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        else:
+            st.info("Nenhum prospect quente no momento.")
 
     with tab3:
         conc_df = df_opp[~is_denigris(df_opp["Concessionário"])].copy()
-        cs = conc_df.groupby(["CNPJ_NORM","NOMEPROPRIETARIO","NO_CIDADE"]).agg(
-            Qtd=("Chassi","count"), UltimaConc=("Data emplacamento","max"),
-            PrincipalConc=("Concessionário", lambda x: x.mode()[0] if not x.empty else "—")
-        ).reset_index().sort_values("Qtd",ascending=False)
-        cs["UltimaConc"] = pd.to_datetime(cs["UltimaConc"]).dt.strftime("%d/%m/%Y")
-        cs = cs.drop(columns=["CNPJ_NORM"])
-        st.markdown(f'<div class="alert-yellow">⚠️ <strong>{len(cs)} clientes</strong> emplacaram em concorrentes</div>', unsafe_allow_html=True)
-        st.dataframe(cs, use_container_width=True, hide_index=True)
-        buf=BytesIO(); cs.to_excel(buf,index=False,engine="openpyxl"); buf.seek(0)
-        st.download_button("📥 Exportar", buf, file_name="concorrentes.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        if conc_df.empty:
+            st.success("✅ Nenhum emplacamento em concorrente encontrado.")
+        else:
+            cs = conc_df.groupby(["CNPJ_NORM","NOMEPROPRIETARIO","NO_CIDADE"]).agg(
+                Qtd=("Chassi","count"),
+                UltimaConc=("Data emplacamento","max"),
+                PrincipalConc=("Concessionário", lambda x: x.mode()[0] if not x.empty else "—")
+            ).reset_index().sort_values("Qtd", ascending=False)
+            cs["UltimaConc"] = pd.to_datetime(cs["UltimaConc"], errors="coerce").dt.strftime("%d/%m/%Y")
+            if df_cart is not None:
+                vm2 = df_cart.set_index("CNPJ_NORM")["VENDEDOR"].to_dict()
+                cs["Vendedor"] = cs["CNPJ_NORM"].map(vm2).fillna("—")
+            cs_show = cs.drop(columns=["CNPJ_NORM"]).rename(columns={
+                "NOMEPROPRIETARIO":"Cliente","NO_CIDADE":"Cidade",
+                "Qtd":"Qtd Conc.","UltimaConc":"Última Conc.","PrincipalConc":"Principal Concorrente"
+            })
+            st.markdown(f'<div class="alert-yellow">⚠️ <strong>{len(cs_show)} clientes</strong> emplacaram em concorrentes</div>', unsafe_allow_html=True)
+            st.dataframe(cs_show, use_container_width=True, hide_index=True)
+            buf_c = BytesIO(); cs_show.to_excel(buf_c, index=False, engine="openpyxl"); buf_c.seek(0)
+            st.download_button("📥 Exportar", buf_c, file_name="concorrentes.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # PÁGINA: ADMIN
