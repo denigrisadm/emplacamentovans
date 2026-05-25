@@ -813,8 +813,346 @@ def get_vendedor_final(cnpj_norm, cart_row, vendedores_ativos):
 # Lógica de Área Operacional removida conforme solicitação.
 # A distribuição agora é feita dinamicamente por CNPJ.
 
+def gerar_dashboard_gestao(df_g, df_cart, vendedores_ativos, periodo_label):
+    """
+    Gera relatório XLSX estilo dashboard por cliente para a página de Gestão.
+    Cada CNPJ vira um bloco de linhas com até 5 emplacamentos detalhados.
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side, GradientFill
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Dashboard Clientes"
+
+    # ── Paletas ──
+    PRETO    = "FF0A1628"
+    BRANCO   = "FFFFFFFF"
+    DOURADO  = "FFC8A84B"
+    DOURADO_CL = "FFFFF3CC"
+    VERDE    = "FF1E7E34"
+    VERDE_CL = "FFD4EDDA"
+    VERMELHO = "FFC0392B"
+    ROSA_CL  = "FFFCE8E8"
+    AZUL_CL  = "FFE8F0FF"
+    CINZA_CL = "FFF5F5F5"
+    CINZA_MED = "FFD0D0D0"
+    LARANJA_CL = "FFFFF0E0"
+
+    thin = Side(style="thin", color="FFCCCCCC")
+    thick = Side(style="medium", color="FF888888")
+    borda = Border(left=thin, right=thin, top=thin, bottom=thin)
+    borda_thick = Border(left=thick, right=thick, top=thick, bottom=thick)
+
+    def fill(hex_color):
+        return PatternFill("solid", start_color=hex_color, end_color=hex_color)
+
+    def font(bold=False, color=PRETO, size=10, italic=False):
+        return Font(name="Calibri", bold=bold, color=color, size=size, italic=italic)
+
+    def aln(h="left", v="center", wrap=False):
+        return Alignment(horizontal=h, vertical=v, wrap_text=wrap)
+
+    # ── Larguras de colunas ──
+    col_widths = {
+        "A": 6,   # #
+        "B": 35,  # Empresa
+        "C": 18,  # CNPJ
+        "D": 22,  # Vendedor
+        "E": 20,  # Cidade
+        "F": 8,   # Total
+        "G": 8,   # De Nigris
+        "H": 8,   # Conc.
+        "I": 10,  # % Nigris
+        "J": 14,  # Status
+        "K": 12,  # Data
+        "L": 28,  # Modelo
+        "M": 28,  # Concessionária
+        "N": 16,  # Cidade Emplac.
+    }
+    for col, w in col_widths.items():
+        ws.column_dimensions[col].width = w
+
+    # ── CABEÇALHO GERAL (linhas 1-3) ──
+    ws.row_dimensions[1].height = 32
+    ws.row_dimensions[2].height = 18
+    ws.row_dimensions[3].height = 20
+
+    ws.merge_cells("A1:N1")
+    c = ws["A1"]
+    c.value = f"DASHBOARD DE GESTÃO — CLIENTES POR PERÍODO: {periodo_label.upper()}"
+    c.font = Font(name="Calibri", bold=True, color=BRANCO, size=14)
+    c.fill = fill(PRETO)
+    c.alignment = aln("center", "center")
+    c.border = borda
+
+    ws.merge_cells("A2:N2")
+    c = ws["A2"]
+    c.value = f"Gerado em: {pd.Timestamp.now().strftime('%d/%m/%Y %H:%M')}  |  Total de clientes: {df_g['CNPJ_NORM'].nunique()}  |  Total de emplacamentos: {len(df_g)}"
+    c.font = font(size=9, italic=True, color="FF555555")
+    c.fill = fill(CINZA_CL)
+    c.alignment = aln("center")
+
+    # ── CABEÇALHO DE COLUNAS (linha 3) ──
+    hdrs = ["#","Empresa","CNPJ","Vendedor","Cidade","Total","D.Nigris","Conc.","% Nigris","Status",
+            "Data","Modelo","Concessionária","Cidade Emplac."]
+    for ci, h in enumerate(hdrs, 1):
+        cell = ws.cell(row=3, column=ci)
+        cell.value = h
+        cell.font = Font(name="Calibri", bold=True, color=BRANCO, size=10)
+        cell.fill = fill(DOURADO)
+        cell.alignment = aln("center", "center")
+        cell.border = borda
+
+    # ── Construir mapa vendedor por CNPJ ──
+    cart_map = {}
+    nc_set = set()
+    if df_cart is not None:
+        cart_map = df_cart.drop_duplicates("CNPJ_NORM").set_index("CNPJ_NORM")["VENDEDOR"].to_dict()
+        nc_set = set(df_cart["CNPJ_NORM"].dropna().unique())
+
+    n_vends = max(len(vendedores_ativos), 1)
+
+    def get_vend_label(cnpj):
+        v = cart_map.get(cnpj, "")
+        if v and str(v).strip() and str(v).strip() not in ["—", "nan"]:
+            return str(v).strip().title(), False  # (nome, is_nao_cadastrado)
+        # Distribuição hash
+        if vendedores_ativos:
+            idx = int(hashlib.md5(str(cnpj).encode()).hexdigest(), 16) % n_vends
+            return vendedores_ativos[idx].title(), True
+        return "—", True
+
+    # ── Agrupar por CNPJ ──
+    grupos = []
+    for cnpj, grp in df_g.groupby("CNPJ_NORM"):
+        grp_sorted = grp.sort_values("Data emplacamento", ascending=False)
+        ultimo = grp_sorted.iloc[0]
+        total = len(grp)
+        nigris = int(is_denigris(grp["Concessionário"]).sum())
+        conc = total - nigris
+        pct = round(nigris / total * 100, 0) if total else 0
+        vend_nome, is_nc = get_vend_label(cnpj)
+        grupos.append({
+            "cnpj": cnpj,
+            "nome": str(ultimo.get("NOMEPROPRIETARIO", "—")).strip(),
+            "cnpj_fmt": str(ultimo.get("CPFCNPJPROPRIETARIO", cnpj)).strip(),
+            "cidade": str(ultimo.get("NO_CIDADE", "—")).strip().title(),
+            "vendedor": vend_nome,
+            "is_nc": is_nc,
+            "total": total,
+            "nigris": nigris,
+            "conc": conc,
+            "pct": pct,
+            "rows": grp_sorted.head(5).to_dict("records"),  # até 5 emplacamentos
+        })
+
+    # Ordenar: mais emplacamentos primeiro, depois por nome
+    grupos.sort(key=lambda x: (-x["total"], x["nome"].upper()))
+
+    # ── Escrever blocos ──
+    cur_row = 4
+    for idx, g in enumerate(grupos, 1):
+        n_rows = max(len(g["rows"]), 1)
+        bloco_start = cur_row
+        bloco_end = cur_row + n_rows - 1
+
+        # Cor do bloco de fundo
+        if g["conc"] > 0 and g["nigris"] == 0:
+            bg_resumo = ROSA_CL      # 100% concorrência
+        elif g["nigris"] > 0 and g["conc"] == 0:
+            bg_resumo = VERDE_CL     # 100% De Nigris
+        elif g["is_nc"]:
+            bg_resumo = LARANJA_CL  # Não cadastrado
+        else:
+            bg_resumo = AZUL_CL if idx % 2 == 0 else BRANCO
+
+        # Altura das linhas do bloco
+        for r in range(bloco_start, bloco_end + 1):
+            ws.row_dimensions[r].height = 17
+
+        # Linha separadora antes de cada bloco (exceto o primeiro)
+        if idx > 1:
+            for col in range(1, 15):
+                cell = ws.cell(row=bloco_start - 1 if bloco_start > 4 else bloco_start, column=col)
+
+        # ── Coluna A: número sequencial (span do bloco) ──
+        if n_rows > 1:
+            ws.merge_cells(f"A{bloco_start}:A{bloco_end}")
+        c = ws.cell(row=bloco_start, column=1)
+        c.value = idx
+        c.font = Font(name="Calibri", bold=True, color=BRANCO, size=10)
+        c.fill = fill(PRETO)
+        c.alignment = aln("center", "center")
+        c.border = borda
+
+        # ── Coluna B: nome empresa (span) ──
+        if n_rows > 1:
+            ws.merge_cells(f"B{bloco_start}:B{bloco_end}")
+        c = ws.cell(row=bloco_start, column=2)
+        nc_tag = " ⚠ NÃO CADASTRADO" if g["is_nc"] else ""
+        c.value = g["nome"] + nc_tag
+        c.font = Font(name="Calibri", bold=True, color=PRETO if not g["is_nc"] else "FF994400", size=10)
+        c.fill = fill(bg_resumo)
+        c.alignment = aln("left", "center", wrap=True)
+        c.border = borda
+
+        # ── Coluna C: CNPJ (span) ──
+        if n_rows > 1:
+            ws.merge_cells(f"C{bloco_start}:C{bloco_end}")
+        c = ws.cell(row=bloco_start, column=3)
+        c.value = g["cnpj_fmt"]
+        c.font = font(size=9, color="FF555555")
+        c.fill = fill(bg_resumo)
+        c.alignment = aln("center", "center")
+        c.border = borda
+
+        # ── Coluna D: vendedor (span) ──
+        if n_rows > 1:
+            ws.merge_cells(f"D{bloco_start}:D{bloco_end}")
+        c = ws.cell(row=bloco_start, column=4)
+        c.value = g["vendedor"]
+        c.font = Font(name="Calibri", bold=False, color="FF0044AA" if not g["is_nc"] else "FF994400", size=9)
+        c.fill = fill(bg_resumo)
+        c.alignment = aln("center", "center", wrap=True)
+        c.border = borda
+
+        # ── Coluna E: cidade (span) ──
+        if n_rows > 1:
+            ws.merge_cells(f"E{bloco_start}:E{bloco_end}")
+        c = ws.cell(row=bloco_start, column=5)
+        c.value = g["cidade"]
+        c.font = font(size=9)
+        c.fill = fill(bg_resumo)
+        c.alignment = aln("center", "center")
+        c.border = borda
+
+        # ── Coluna F: total (span) ──
+        if n_rows > 1:
+            ws.merge_cells(f"F{bloco_start}:F{bloco_end}")
+        c = ws.cell(row=bloco_start, column=6)
+        c.value = g["total"]
+        c.font = Font(name="Calibri", bold=True, size=11, color=PRETO)
+        c.fill = fill(bg_resumo)
+        c.alignment = aln("center", "center")
+        c.border = borda
+
+        # ── Coluna G: De Nigris (span) ──
+        if n_rows > 1:
+            ws.merge_cells(f"G{bloco_start}:G{bloco_end}")
+        c = ws.cell(row=bloco_start, column=7)
+        c.value = g["nigris"]
+        c.font = Font(name="Calibri", bold=True, size=11, color="FF1E7E34" if g["nigris"] > 0 else "FFAAAAAA")
+        c.fill = fill(bg_resumo)
+        c.alignment = aln("center", "center")
+        c.border = borda
+
+        # ── Coluna H: Conc. (span) ──
+        if n_rows > 1:
+            ws.merge_cells(f"H{bloco_start}:H{bloco_end}")
+        c = ws.cell(row=bloco_start, column=8)
+        c.value = g["conc"]
+        c.font = Font(name="Calibri", bold=True, size=11, color="FFC0392B" if g["conc"] > 0 else "FFAAAAAA")
+        c.fill = fill(bg_resumo)
+        c.alignment = aln("center", "center")
+        c.border = borda
+
+        # ── Coluna I: % Nigris (span) ──
+        if n_rows > 1:
+            ws.merge_cells(f"I{bloco_start}:I{bloco_end}")
+        c = ws.cell(row=bloco_start, column=9)
+        c.value = f"{int(g['pct'])}%"
+        cor_pct = "FF1E7E34" if g["pct"] >= 50 else "FFC0392B"
+        c.font = Font(name="Calibri", bold=True, size=10, color=cor_pct)
+        c.fill = fill(bg_resumo)
+        c.alignment = aln("center", "center")
+        c.border = borda
+
+        # ── Colunas J-N: até 5 emplacamentos detalhados (uma por linha) ──
+        for ri, row_data in enumerate(g["rows"]):
+            r = bloco_start + ri
+            bg_row = VERDE_CL if is_denigris(pd.Series([row_data.get("Concessionário","")])).iloc[0] else ROSA_CL
+
+            # J: Status
+            is_dn_row = is_denigris(pd.Series([row_data.get("Concessionário","")])).iloc[0]
+            status_txt = "✔ De Nigris" if is_dn_row else "✘ Concorrência"
+            c = ws.cell(row=r, column=10)
+            c.value = status_txt
+            c.font = Font(name="Calibri", bold=True, size=9,
+                         color="FF1E7E34" if is_dn_row else "FFC0392B")
+            c.fill = fill(bg_row)
+            c.alignment = aln("center", "center")
+            c.border = borda
+
+            # K: Data
+            data_val = row_data.get("Data emplacamento")
+            try:
+                data_str = pd.Timestamp(data_val).strftime("%d/%m/%Y") if pd.notna(data_val) else "—"
+            except:
+                data_str = "—"
+            c = ws.cell(row=r, column=11)
+            c.value = data_str
+            c.font = font(size=9)
+            c.fill = fill(bg_row)
+            c.alignment = aln("center", "center")
+            c.border = borda
+
+            # L: Modelo
+            c = ws.cell(row=r, column=12)
+            c.value = str(row_data.get("Modelo","—"))[:35]
+            c.font = font(size=9)
+            c.fill = fill(bg_row)
+            c.alignment = aln("left", "center")
+            c.border = borda
+
+            # M: Concessionária
+            c = ws.cell(row=r, column=13)
+            c.value = str(row_data.get("Concessionário","—"))[:40]
+            c.font = font(size=9)
+            c.fill = fill(bg_row)
+            c.alignment = aln("left", "center", wrap=True)
+            c.border = borda
+
+            # N: Cidade emplacamento
+            c = ws.cell(row=r, column=14)
+            c.value = str(row_data.get("NO_CIDADE","—")).title()
+            c.font = font(size=9)
+            c.fill = fill(bg_row)
+            c.alignment = aln("center", "center")
+            c.border = borda
+
+        # Separador visual entre blocos
+        cur_row = bloco_end + 1
+        # Linha de separação cinza
+        for col in range(1, 15):
+            c_sep = ws.cell(row=cur_row, column=col)
+            c_sep.fill = fill(CINZA_MED)
+            c_sep.border = borda
+        ws.row_dimensions[cur_row].height = 4
+        cur_row += 1
+
+    # ── Legenda no final ──
+    cur_row += 1
+    ws.merge_cells(f"A{cur_row}:N{cur_row}")
+    c = ws.cell(row=cur_row, column=1)
+    c.value = "LEGENDA:   🟩 Verde = 100% De Nigris   |   🟥 Rosa = 100% Concorrência   |   🟧 Laranja = Não Cadastrado   |   🔵 Azul = Misto"
+    c.font = font(size=9, italic=True, color="FF555555")
+    c.fill = fill(CINZA_CL)
+    c.alignment = aln("left", "center")
+
+    # ── Congelar painel ──
+    ws.freeze_panes = "A4"
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
 def gerar_relatorio_emplacamento(emp_mes, emp_area, cnpjs_carteira_set, todos_cnpjs_cart,
                                   sel_mes_lbl, sel_ano, consultor_nome):
+
     """Gera relatório XLSX estilizado igual ao modelo — cabeçalho colorido + tabela de dados."""
     from openpyxl import Workbook
     from openpyxl.styles import (Font, PatternFill, Alignment, Border, Side,
@@ -2790,17 +3128,31 @@ elif pagina == "gestao":
     st.plotly_chart(fig_e, use_container_width=True)
 
     # Exports
-    ex1,ex2,ex3 = st.columns(3)
+    ex1, ex2, ex3 = st.columns(3)
     with ex1:
         _exp_cols = [c for c in ["Data emplacamento","NOMEPROPRIETARIO","NO_CIDADE","Marca","Modelo","Concessionário"] if c in df_g.columns]
-        buf=BytesIO(); df_g[_exp_cols].to_excel(buf,index=False,engine="openpyxl"); buf.seek(0)
+        buf = BytesIO(); df_g[_exp_cols].to_excel(buf, index=False, engine="openpyxl"); buf.seek(0)
         st.download_button("📄 Base Filtrada", buf, file_name="base_filtrada.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     with ex2:
         if df_cart is not None and 'perf_e' in locals():
-            buf2=BytesIO(); perf_e.to_excel(buf2,index=False,engine="openpyxl"); buf2.seek(0)
+            buf2 = BytesIO(); perf_e.to_excel(buf2, index=False, engine="openpyxl"); buf2.seek(0)
             st.download_button("👥 Consultores", buf2, file_name="consultores.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    with ex3:
+        if not df_g.empty:
+            periodo_str = f"{', '.join(mes_s_g)} / {', '.join(str(a) for a in anos_s_g)}" if anos_s_g and mes_s_g else "Período Completo"
+            if cons_s_g != "Todos":
+                periodo_str += f" — {cons_s_g}"
+            with st.spinner("Gerando dashboard..."):
+                buf_dash = gerar_dashboard_gestao(df_g, df_cart, get_vendedores_ativos(), periodo_str)
+            st.download_button(
+                "📊 Dashboard por Cliente",
+                buf_dash,
+                file_name=f"dashboard_clientes_{pd.Timestamp.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                help="Excel com resumo detalhado por cliente: status, vendedor, até 5 emplacamentos"
+            )
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # PÁGINA: OPORTUNIDADES
