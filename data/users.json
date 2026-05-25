@@ -46,5 +46,12 @@
     "nome": "MARIA PAULA BORELLI BARBOZA",
     "consultor_key": "MARIA PAULA BORELLI BARBOZA",
     "ultimo_acesso": null
+  },
+  "NINA": {
+    "senha_hash": "e5c2cbadca1018a10aba0677817bdafc9aeadfabf6f001156a634ce9a66876b7",
+    "perfil": "gerente",
+    "nome": "NINA BARBATO",
+    "consultor_key": "NINA",
+    "ultimo_acesso": null
   }
 }
