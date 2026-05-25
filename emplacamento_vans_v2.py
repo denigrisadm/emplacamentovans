@@ -725,74 +725,63 @@ def registrar_acesso(login):
 # ════════════════════════════════════════════════════════════════
 # Função load_area removida. A distribuição agora é dinâmica.
 
-def load_carteira(src):
-    if isinstance(src, BytesIO): src.seek(0)
+@st.cache_data(show_spinner=False)
+def load_carteira(data_bytes):
+    src = BytesIO(data_bytes)
     df = pd.read_excel(src)
     df.columns = [c.strip() for c in df.columns]
     df["CPF/CNPJ"]  = df["CPF/CNPJ"].astype(str).str.strip()
     df["CNPJ_NORM"] = df["CPF/CNPJ"].astype(str).str.replace(r"\D","",regex=True)
     df["VENDEDOR"]  = df.get("VENDEDOR", pd.Series(dtype=str)).astype(str).str.strip()
+    df["VENDEDOR"]  = df["VENDEDOR"].str.title()
+    if "Nome" in df.columns:
+        df["Nome"] = df["Nome"].astype(str).str.strip()
     if "CEP" in df.columns:
         df["CEP_norm"] = df["CEP"].apply(norm_cep)
     return df
 
-def load_emplacamentos(src, label=""):
-    if isinstance(src, BytesIO): src.seek(0)
-    # Detectar linha do header (procura "Chassi" nas primeiras 15 linhas; default=0)
+@st.cache_data(show_spinner=False)
+def load_emplacamentos(data_bytes, label=""):
+    src = BytesIO(data_bytes)
     raw = pd.read_excel(src, header=None, nrows=15)
     header_row = 0
     for i in range(len(raw)):
         if any("Chassi" in str(v) for v in raw.iloc[i].tolist()):
             header_row = i; break
-    if isinstance(src, BytesIO): src.seek(0)
+    src.seek(0)
     df = pd.read_excel(src, header=header_row)
     df.columns = [str(c).strip() for c in df.columns]
-
-    # Normalizar campos de texto essenciais
     for col in ["CPFCNPJPROPRIETARIO","NOMEPROPRIETARIO","NO_CIDADE","NO_BAIRRO",
                 "Placa","Chassi","Concessionário","Modelo","Marca","Segmento"]:
         if col in df.columns:
             df[col] = df[col].astype(str).str.strip()
-
-    # CNPJ normalizado (só dígitos) — vetorizado
     df["CNPJ_NORM"] = df["CPFCNPJPROPRIETARIO"].astype(str).str.replace(r"\D", "", regex=True)
-
-    # Data — tenta dayfirst (dd/mm/yyyy) e mixed
-    df["Data emplacamento"] = pd.to_datetime(
-        df["Data emplacamento"], dayfirst=True, errors="coerce"
-    )
-    # Fallback para formato americano se muitos nulos
+    df["Data emplacamento"] = pd.to_datetime(df["Data emplacamento"], dayfirst=True, errors="coerce")
     if df["Data emplacamento"].isna().sum() > len(df) * 0.5:
-        df["Data emplacamento"] = pd.to_datetime(
-            df["Data emplacamento"], errors="coerce"
-        )
-
+        df["Data emplacamento"] = pd.to_datetime(df["Data emplacamento"], errors="coerce")
     df["Ano"] = df["Data emplacamento"].dt.year
     df["Mes"] = df["Data emplacamento"].dt.month
-
     df["Placa_norm"] = df["Placa"].str.replace("-","").str.replace(" ","").str.upper()
     df["NO_CIDADE_NORM"] = norm_str_series(df["NO_CIDADE"])
     df["NO_BAIRRO_NORM"] = norm_str_series(df["NO_BAIRRO"].fillna(""))
-
     if "NU_CEP" in df.columns:
-        df["CEP_norm"] = (df["NU_CEP"].astype(str)
-                          .str.replace(r"\D","",regex=True)
-                          .str.zfill(8).str[:8])
+        df["CEP_norm"] = (df["NU_CEP"].astype(str).str.replace(r"\D","",regex=True).str.zfill(8).str[:8])
     else:
         df["CEP_norm"] = ""
-
-    # Remover linhas sem data válida
     df.dropna(subset=["Ano"], inplace=True)
     df["Ano"] = df["Ano"].astype(int)
     df["Mes"] = df["Mes"].astype(int)
     df["_fonte"] = label
     return df
 
-def merge_emp(dfs):
+@st.cache_data(show_spinner=False)
+def merge_emp(data_bytes_list, labels):
+    dfs = [load_emplacamentos(b, l) for b, l in zip(data_bytes_list, labels)]
     m = pd.concat(dfs, ignore_index=True)
     m.drop_duplicates(subset=["Chassi"], keep="last", inplace=True)
     m.sort_values("Data emplacamento", inplace=True)
     return m
+
 
 def get_vendedores_ativos():
     """Retorna lista de nomes de vendedores cadastrados no sistema."""
@@ -1158,7 +1147,7 @@ if st.session_state.users_db is None:
 USERS = st.session_state.users_db
 
 # ════════════════════════════════════════════════════════════════
-# DADOS: só carrega APÓS login, com spinner discreto
+# DADOS: só carrega APÓS login, com cache agressivo
 # ════════════════════════════════════════════════════════════════
 
 def load_excel_from_github(filename):
@@ -1229,29 +1218,34 @@ def carregar_dados_se_necessario():
             else:
                 st.session_state["_cart_erro"] = f"{filename}: {err}"
         if src:
-            st.session_state.df_cart = load_carteira(src)
+            st.session_state.df_cart = load_carteira(src.read())
 
-    # 3. EMPLACAMENTOS
-    if not st.session_state.df_emp_list:
+    # 3. EMPLACAMENTOS — armazena bytes para cache funcionar
+    if not st.session_state.get("_emp_bytes_list"):
         arquivos_emp = ["EMPLACAMENTO APP VANS.xlsx"]
-        emp_list = []
-        emp_erros = []
+        bytes_list, labels_list, emp_erros = [], [], []
         for arq in arquivos_emp:
             src, err = load_excel_from_github(arq)
             if src:
-                df = load_emplacamentos(src, label=arq)
-                if df is not None:
-                    emp_list.append(df)
+                bytes_list.append(src.read())
+                labels_list.append(arq)
             else:
                 emp_erros.append(f"{arq}: {err}")
-        st.session_state.df_emp_list = emp_list
-        st.session_state["_emp_erros"] = emp_erros if not emp_list else []
-            
-    # Marca como carregado se ao menos a carteira foi obtida (emplacamentos são opcionais)
-    if st.session_state.df_cart is not None or st.session_state.df_emp_list:
+        st.session_state["_emp_bytes_list"] = bytes_list
+        st.session_state["_emp_labels_list"] = labels_list
+        st.session_state["_emp_erros"] = emp_erros if not bytes_list else []
+        if bytes_list:
+            # merge_emp cacheado — só roda uma vez enquanto bytes não mudarem
+            st.session_state["_df_emp_merged"] = merge_emp(bytes_list, labels_list)
+            st.session_state.df_emp_list = [True]  # sinaliza que carregou
+
+    # Marca como carregado
+    if st.session_state.df_cart is not None or st.session_state.get("_df_emp_merged") is not None:
         st.session_state.dados_carregados = True
 
-carregar_dados_se_necessario()
+# Só carrega dados se usuário já está logado (evita delay na tela de login)
+if st.session_state.user is not None:
+    carregar_dados_se_necessario()
 
 if st.session_state.user is None:
     logo_html = logo_img(52) if LOGO_B64 else '<span style="font-size:24px;font-weight:800;color:#0a1628;">Comercial De Nigris</span>'
@@ -1334,12 +1328,8 @@ cons_key  = u_data.get("consultor_key", u_key)
 carregar_dados_se_necessario()
 df_area = st.session_state.df_area
 df_cart = st.session_state.df_cart
-# merge_emp cacheado no session_state — recalcula só quando lista muda
-_emp_list_len = len(st.session_state.df_emp_list)
-if st.session_state.df_emp_list and st.session_state.get("_emp_merged_len") != _emp_list_len:
-    st.session_state["_df_emp_merged"] = merge_emp(st.session_state.df_emp_list)
-    st.session_state["_emp_merged_len"] = _emp_list_len
-df_emp = st.session_state.get("_df_emp_merged") if st.session_state.df_emp_list else None
+# df_emp já foi mergeado em carregar_dados_se_necessario com cache
+df_emp = st.session_state.get("_df_emp_merged")
 
 PAGINAS_GESTOR  = [("busca","🔍","Busca"),("emplacamentos","📍","Emplacam."),("carteira","📋","Carteira"),("painel","📊","Painel"),("gestao","📈","Gestão"),("oportunidades","🎯","Oportun."),("admin","⚙️","Admin")]
 PAGINAS_GERENTE = [("busca","🔍","Busca"),("emplacamentos","📍","Emplacam."),("carteira","📋","Carteira"),("painel","📊","Painel"),("gestao","📈","Gestão"),("oportunidades","🎯","Oportun.")]
@@ -2611,9 +2601,12 @@ elif pagina == "painel":
         def _atribuir_vend(row):
             v = row.get("_VEND_ALL","")
             if pd.notna(v) and str(v).strip() and str(v).strip() not in ["—","nan"]:
-                return str(v).strip()
-            return get_consultor_distribuido(str(row.get("CNPJ_NORM","")), vendedores_ativos_p)
+                return str(v).strip().title()
+            vd = get_consultor_distribuido(str(row.get("CNPJ_NORM","")), vendedores_ativos_p)
+            return vd.title() if vd else "Sem Vendedor"
         df_p_vend["VENDEDOR_FINAL"] = df_p_vend.apply(_atribuir_vend, axis=1)
+        # Normalizar para evitar duplicatas
+        df_p_vend["VENDEDOR_FINAL"] = df_p_vend["VENDEDOR_FINAL"].str.title()
 
         resumo_vend = (
             df_p_vend.groupby("VENDEDOR_FINAL")
@@ -2751,8 +2744,11 @@ elif pagina == "gestao":
             v = row.get("_VEND_G","")
             if pd.notna(v) and str(v).strip() and str(v).strip() not in ["—","nan"]:
                 return str(v).strip().title()
-            return get_consultor_distribuido(str(row.get("CNPJ_NORM","")), vends_atv_gx)
+            vd = get_consultor_distribuido(str(row.get("CNPJ_NORM","")), vends_atv_gx)
+            return vd.title() if vd else "Sem Vendedor"
+        # Normalizar ANTES do groupby para eliminar duplicatas (ex: "EDIVANDA" vs "Edivanda")
         df_gx["Consultor"] = df_gx.apply(_vend_g, axis=1)
+        df_gx["Consultor"] = df_gx["Consultor"].str.title()
         perf = df_gx.groupby("Consultor").agg(
             Total=("Chassi","count"),
             Nigris=("Concessionário", lambda x: is_denigris(x).sum()),
@@ -3137,7 +3133,8 @@ elif pagina == "admin":
             st.markdown('<div class="upload-box"><div class="upload-title">📋 Carteira</div>', unsafe_allow_html=True)
             up_c = st.file_uploader("CARTEIRA.xlsx", type=["xlsx"], key="up_cart")
             if up_c:
-                st.session_state.df_cart = load_carteira(BytesIO(up_c.getvalue()))
+                cart_bytes = up_c.getvalue()
+                st.session_state.df_cart = load_carteira(cart_bytes)
                 st.success("✅ Carteira atualizada!")
             st.markdown('</div>', unsafe_allow_html=True)
 
@@ -3146,16 +3143,32 @@ elif pagina == "admin":
             up_e = st.file_uploader("EMPLACAMENTOS.xlsx (múltiplos)", type=["xlsx"], key="up_emp", accept_multiple_files=True)
             if up_e:
                 novos = 0
+                bytes_list = st.session_state.get("_emp_bytes_list", [])
+                labels_list = st.session_state.get("_emp_labels_list", [])
+                fontes = st.session_state.emp_fontes
                 for f in up_e:
-                    if f.name not in st.session_state.emp_fontes:
-                        st.session_state.df_emp_list.append(load_emplacamentos(BytesIO(f.getvalue()), label=f.name))
-                        st.session_state.emp_fontes.append(f.name)
+                    if f.name not in fontes:
+                        b = f.getvalue()
+                        bytes_list.append(b)
+                        labels_list.append(f.name)
+                        fontes.append(f.name)
                         novos += 1
-                if novos: st.success(f"✅ {novos} arquivo(s) adicionado(s)!")
+                if novos:
+                    st.session_state["_emp_bytes_list"] = bytes_list
+                    st.session_state["_emp_labels_list"] = labels_list
+                    st.session_state.emp_fontes = fontes
+                    st.session_state["_df_emp_merged"] = merge_emp(bytes_list, labels_list)
+                    st.session_state.df_emp_list = [True]
+                    st.success(f"✅ {novos} arquivo(s) adicionado(s)!")
             if st.session_state.emp_fontes:
                 st.markdown("**Arquivos:** " + ", ".join([f"`{f}`" for f in st.session_state.emp_fontes]))
                 if st.button("🗑️ Limpar emplacamentos"):
-                    st.session_state.df_emp_list=[]; st.session_state.emp_fontes=[]; st.rerun()
+                    st.session_state.df_emp_list = []
+                    st.session_state.emp_fontes = []
+                    st.session_state["_emp_bytes_list"] = []
+                    st.session_state["_emp_labels_list"] = []
+                    st.session_state["_df_emp_merged"] = None
+                    st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
 
 st.markdown('</div>', unsafe_allow_html=True)
