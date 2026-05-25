@@ -1960,14 +1960,13 @@ elif pagina == "emplacamentos":
         sel_mes_lbl = st.selectbox("Mês:", mes_labels, index=idx_mes)
         sel_mes = meses_do_ano[mes_labels.index(sel_mes_lbl)]
 
-    # ── CNPJ de TODOS os vendedores (para filtrar conflitos de carteira) ──
+    # ── CNPJs da carteira (vetorizado, sem loop) ──
     if df_cart is not None:
         todos_cnpjs_cart = set(df_cart["CNPJ_NORM"].dropna().unique())
-        # CNPJs que estão na carteira do vendedor selecionado
+        # Comparar em Title Case — df_cart["VENDEDOR"] já está em Title Case desde load_carteira
         if sel_cons != "Todos":
-            sel_cons_norm = norm_str(sel_cons)
             cnpjs_carteira = set(df_cart[
-                df_cart["VENDEDOR"].apply(norm_str) == sel_cons_norm
+                df_cart["VENDEDOR"].str.strip().str.title() == sel_cons.strip().title()
             ]["CNPJ_NORM"].dropna().unique())
         else:
             cnpjs_carteira = todos_cnpjs_cart
@@ -1977,27 +1976,30 @@ elif pagina == "emplacamentos":
 
     cnpjs_carteira_set = cnpjs_carteira
 
-    # ── Nova Lógica de Atribuição Dinâmica ──
+    # ── Atribuição vetorizada (sem loop por linha) ──
     vendedores_ativos = get_vendedores_ativos()
-    
-    # 1. Pegar todos os emplacamentos do período
     emp_periodo = df_emp[(df_emp["Ano"]==sel_ano) & (df_emp["Mes"]==sel_mes)].copy()
-    
-    # 2. Atribuir vendedor a cada emplacamento
-    def get_vendedor_emp(cnpj):
-        # Verificar se está na carteira
-        row_cart = df_cart[df_cart["CNPJ_NORM"] == cnpj]
-        cart_row = row_cart.iloc[0].to_dict() if not row_cart.empty else None
-        return get_vendedor_final(cnpj, cart_row, vendedores_ativos)
-    
-    # Cachear atribuições para velocidade
-    cnpjs_no_periodo = emp_periodo["CNPJ_NORM"].unique()
-    mapa_vendedores = {cnpj: get_vendedor_emp(cnpj) for cnpj in cnpjs_no_periodo}
-    emp_periodo["VENDEDOR_ATRIBUIDO"] = emp_periodo["CNPJ_NORM"].map(mapa_vendedores)
-    
-    # 3. Filtrar pelo vendedor selecionado
+
+    if df_cart is not None and not emp_periodo.empty:
+        # Mapa CNPJ → vendedor da carteira (vetorizado)
+        cart_map = df_cart.drop_duplicates("CNPJ_NORM").set_index("CNPJ_NORM")["VENDEDOR"].to_dict()
+        emp_periodo["VENDEDOR_ATRIBUIDO"] = emp_periodo["CNPJ_NORM"].map(cart_map)
+        # Para CNPJs não na carteira, distribuir por hash (vetorizado)
+        n_vends = max(len(vendedores_ativos), 1)
+        sem_cart_mask = emp_periodo["VENDEDOR_ATRIBUIDO"].isna()
+        if sem_cart_mask.any() and n_vends > 0:
+            cnpjs_sem = emp_periodo.loc[sem_cart_mask, "CNPJ_NORM"]
+            dist_map = {c: vendedores_ativos[int(hashlib.md5(str(c).encode()).hexdigest(), 16) % n_vends]
+                       for c in cnpjs_sem.unique()}
+            emp_periodo.loc[sem_cart_mask, "VENDEDOR_ATRIBUIDO"] = cnpjs_sem.map(dist_map)
+    elif not emp_periodo.empty:
+        emp_periodo["VENDEDOR_ATRIBUIDO"] = None
+
+    # Filtrar por vendedor
     if sel_cons != "Todos":
-        emp_mes = emp_periodo[emp_periodo["VENDEDOR_ATRIBUIDO"] == sel_cons].copy()
+        emp_mes = emp_periodo[
+            emp_periodo["VENDEDOR_ATRIBUIDO"].str.strip().str.title() == sel_cons.strip().title()
+        ].copy()
     else:
         emp_mes = emp_periodo.copy()
 
