@@ -25,5 +25,12 @@
     "nome": "OZENI RODRIGUES",
     "consultor_key": "OZENI RODRIGUES",
     "ultimo_acesso": null
+  },
+  "MARCIA": {
+    "senha_hash": "9bb8243988a7aa0f742fdc002fe3fd8ac320807dae9c2a9b4c5c688ac8202377",
+    "perfil": "vendedor",
+    "nome": "MARCIA HENKEL",
+    "consultor_key": "MARCIA HENKEL",
+    "ultimo_acesso": null
   }
 }
