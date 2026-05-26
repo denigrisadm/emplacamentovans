@@ -2674,10 +2674,10 @@ elif pagina == "carteira":
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 elif pagina == "painel":
     st.markdown("""<div class="page-header"><h1>📊 Painel Geral</h1>
-    <p>Visão consolidada do mercado — Admin</p></div>""", unsafe_allow_html=True)
+    <p>Visão consolidada do mercado</p></div>""", unsafe_allow_html=True)
 
-    if perfil != "gestor":
-        st.warning("⚠️ Acesso restrito ao administrador.")
+    if perfil not in ("gestor", "gerente"):
+        st.warning("⚠️ Acesso restrito a gestores e gerentes.")
         st.stop()
 
     if df_emp is None:
@@ -3025,6 +3025,114 @@ elif pagina == "painel":
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
+    # ══════════════════════════════════════════════════════
+    # SEÇÃO 6 — ALERTAS DE CONCORRÊNCIA (sinal vermelho)
+    # ══════════════════════════════════════════════════════
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown('<div class="sec-title">🚨 Alertas — Clientes que Emplacaram na Concorrência</div>', unsafe_allow_html=True)
+
+    df_alerta = df_p[~is_denigris(df_p["Concessionário"])].copy()
+    if not df_alerta.empty:
+        # Enriquecer com vendedor e status de carteira
+        if df_cart is not None:
+            cart_map_a = df_cart.drop_duplicates("CNPJ_NORM").set_index("CNPJ_NORM")["VENDEDOR"].to_dict()
+        else:
+            cart_map_a = {}
+        vends_a = get_vendedores_ativos()
+        n_a = max(len(vends_a), 1)
+
+        def _vend_alerta(cnpj):
+            v = cart_map_a.get(cnpj, "")
+            if v and str(v).strip() not in ["", "—", "nan"]:
+                return str(v).strip().title(), False
+            if vends_a:
+                idx = int(hashlib.md5(str(cnpj).encode()).hexdigest(), 16) % n_a
+                return vends_a[idx].title(), True
+            return "—", True
+
+        alerta_agg = (
+            df_alerta.groupby("CNPJ_NORM")
+            .agg(
+                Nome=("NOMEPROPRIETARIO", "first"),
+                CNPJ_fmt=("CPFCNPJPROPRIETARIO", "first"),
+                Cidade=("NO_CIDADE", "first"),
+                QtdConc=("Chassi", "count"),
+                UltimaData=("Data emplacamento", "max"),
+                PrincipalConc=("Concessionário", lambda x: x.value_counts().index[0]),
+                Modelos=("Modelo", lambda x: ", ".join(x.dropna().unique()[:3])),
+            )
+            .reset_index()
+            .sort_values("QtdConc", ascending=False)
+        )
+
+        # Adicionar vendedor e status de cadastro
+        alerta_agg[["Vendedor", "NaoCad"]] = pd.DataFrame(
+            alerta_agg["CNPJ_NORM"].apply(lambda c: _vend_alerta(c)).tolist(),
+            index=alerta_agg.index
+        )
+        alerta_agg["Status"] = alerta_agg["NaoCad"].map({True: "⚠️ NÃO CADASTRADO", False: "📋 Na Carteira"})
+        alerta_agg["UltimaData"] = pd.to_datetime(alerta_agg["UltimaData"], errors="coerce").dt.strftime("%d/%m/%Y")
+        alerta_agg["Nome"] = alerta_agg["Nome"].str.title()
+        alerta_agg["Cidade"] = alerta_agg["Cidade"].str.title()
+
+        total_alertas = len(alerta_agg)
+        cart_alertas = int((~alerta_agg["NaoCad"]).sum())
+        nc_alertas = int(alerta_agg["NaoCad"].sum())
+
+        a1, a2, a3 = st.columns(3)
+        with a1:
+            st.markdown(f'<div class="kpi-card"><div class="kpi-label">⚡ Clientes na Concorrência</div><div class="kpi-value red">{total_alertas}</div><div class="kpi-sub">no período</div></div>', unsafe_allow_html=True)
+        with a2:
+            st.markdown(f'<div class="kpi-card"><div class="kpi-label">📋 Da Carteira</div><div class="kpi-value red">{cart_alertas}</div><div class="kpi-sub">eram nossos clientes</div></div>', unsafe_allow_html=True)
+        with a3:
+            st.markdown(f'<div class="kpi-card"><div class="kpi-label">⚠️ Não Cadastrados</div><div class="kpi-value" style="color:#994400">{nc_alertas}</div><div class="kpi-sub">prospects perdidos</div></div>', unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # Tabela de alertas
+        alerta_show = alerta_agg[[
+            "Nome","CNPJ_fmt","Cidade","Vendedor","Status",
+            "QtdConc","UltimaData","PrincipalConc","Modelos"
+        ]].rename(columns={
+            "CNPJ_fmt":"CNPJ","QtdConc":"Qtd Conc.",
+            "UltimaData":"Última Data","PrincipalConc":"Principal Concorrente",
+            "Modelos":"Modelos"
+        })
+        st.dataframe(alerta_show, use_container_width=True, hide_index=True)
+    else:
+        st.success(f"✅ Nenhum cliente emplacou na concorrência em {periodo_label}.")
+
+    # ══════════════════════════════════════════════════════
+    # SEÇÃO 7 — BOTÃO DASHBOARD EXCEL POR CNPJ
+    # ══════════════════════════════════════════════════════
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown('<div class="sec-title">📊 Dashboard Excel — Resumo por Cliente</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="alert-blue">📋 Gera um Excel completo com cada CNPJ, quantos chassis emplacou, '
+        'em qual concessionária, se está na carteira de algum vendedor, qual modelo — '
+        'ideal para revisão semanal ou mensal.</div>',
+        unsafe_allow_html=True
+    )
+
+    col_dash1, col_dash2 = st.columns([1, 3])
+    with col_dash1:
+        gerar_dash = st.button("📊 Gerar Dashboard Excel", use_container_width=True, type="primary", key="btn_dash_painel")
+    with col_dash2:
+        st.markdown(f"<small style='color:#8a95b0;'>Período: <strong>{periodo_label}</strong> · {len(df_p):,} emplacamentos · {df_p['CNPJ_NORM'].nunique():,} clientes únicos</small>", unsafe_allow_html=True)
+
+    if gerar_dash:
+        with st.spinner("Gerando dashboard... aguarde"):
+            buf_dash = gerar_dashboard_gestao(df_p, df_cart, get_vendedores_ativos(), periodo_label)
+        fname = f"dashboard_{periodo_label.replace(' ','_').replace('/','_').replace(',','').strip()}.xlsx"
+        st.download_button(
+            f"⬇️ Baixar Dashboard — {periodo_label}",
+            buf_dash,
+            file_name=fname,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="dl_dash_painel"
+        )
+        st.success(f"✅ Dashboard gerado com {df_p['CNPJ_NORM'].nunique():,} clientes e {len(df_p):,} emplacamentos!")
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # PÁGINA: GESTÃO & PERFORMANCE
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -3128,7 +3236,7 @@ elif pagina == "gestao":
     st.plotly_chart(fig_e, use_container_width=True)
 
     # Exports
-    ex1, ex2, ex3 = st.columns(3)
+    ex1, ex2 = st.columns(2)
     with ex1:
         _exp_cols = [c for c in ["Data emplacamento","NOMEPROPRIETARIO","NO_CIDADE","Marca","Modelo","Concessionário"] if c in df_g.columns]
         buf = BytesIO(); df_g[_exp_cols].to_excel(buf, index=False, engine="openpyxl"); buf.seek(0)
@@ -3139,20 +3247,6 @@ elif pagina == "gestao":
             buf2 = BytesIO(); perf_e.to_excel(buf2, index=False, engine="openpyxl"); buf2.seek(0)
             st.download_button("👥 Consultores", buf2, file_name="consultores.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    with ex3:
-        if not df_g.empty:
-            periodo_str = f"{', '.join(mes_s_g)} / {', '.join(str(a) for a in anos_s_g)}" if anos_s_g and mes_s_g else "Período Completo"
-            if cons_s_g != "Todos":
-                periodo_str += f" — {cons_s_g}"
-            with st.spinner("Gerando dashboard..."):
-                buf_dash = gerar_dashboard_gestao(df_g, df_cart, get_vendedores_ativos(), periodo_str)
-            st.download_button(
-                "📊 Dashboard por Cliente",
-                buf_dash,
-                file_name=f"dashboard_clientes_{pd.Timestamp.now().strftime('%Y%m%d')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                help="Excel com resumo detalhado por cliente: status, vendedor, até 5 emplacamentos"
-            )
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # PÁGINA: OPORTUNIDADES
