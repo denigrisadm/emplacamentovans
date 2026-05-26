@@ -793,25 +793,41 @@ def get_vendedores_ativos():
 def get_consultor_distribuido(cnpj_norm, vendedores_ativos):
     """Distribui CNPJs de forma equilibrada e determinística entre os vendedores."""
     if not vendedores_ativos: return None
-    # Usar hash do CNPJ para garantir que o mesmo cliente caia sempre no mesmo vendedor
     h = int(hashlib.md5(cnpj_norm.encode()).hexdigest(), 16)
     idx = h % len(vendedores_ativos)
     return vendedores_ativos[idx]
 
 def get_vendedor_final(cnpj_norm, cart_row, vendedores_ativos):
-    """
-    Regra de atribuição:
-    1. Se está na carteira (cart_row) e tem vendedor, usa ele.
-    2. Se não, distribui entre os vendedores ativos de forma equilibrada.
-    """
     if cart_row:
         v = safe_str(cart_row.get("VENDEDOR", ""), "").strip()
         if v and v != "—":
             return v
     return get_consultor_distribuido(cnpj_norm, vendedores_ativos)
 
-# Lógica de Área Operacional removida conforme solicitação.
-# A distribuição agora é feita dinamicamente por CNPJ.
+def resolve_vendedor(cnpj, cart_cnpj_set, cart_map, vendedores_ativos):
+    """
+    Função central de atribuição — SEMPRE retorna (nome, na_carteira).
+    Usar em TODOS os lugares do app para garantir consistência.
+      - cart_cnpj_set : set de CNPJs presentes na carteira
+      - cart_map      : dict CNPJ → nome do vendedor (da carteira)
+      - vendedores_ativos : lista de vendedores ativos
+    Retorna:
+      (str nome_vendedor, bool na_carteira)
+    """
+    na_carteira = cnpj in cart_cnpj_set
+    if na_carteira:
+        v = cart_map.get(cnpj, "")
+        nome = str(v).strip().title() if v and str(v).strip() not in ["", "—", "nan"] else "—"
+    else:
+        vd = get_consultor_distribuido(str(cnpj), vendedores_ativos)
+        nome = vd.title() if vd else "—"
+    return nome, na_carteira
+
+def fmt_vendedor(nome, na_carteira):
+    """Formata label do vendedor sempre mostrando status de cadastro."""
+    if na_carteira:
+        return nome
+    return f"{nome} ⚠️ NÃO CADASTRADO"
 
 def gerar_dashboard_gestao(df_g, df_cart, vendedores_ativos, periodo_label):
     """
@@ -1832,7 +1848,10 @@ if pagina == "busca":
             cid_c  = norm_str(str(last.get("NO_CIDADE","")))
             bai_c  = norm_str(str(last.get("NO_BAIRRO","")))
             vendedores_ativos = get_vendedores_ativos()
-            consultor_resp = get_vendedor_final(cnpj_sel, cart_row, vendedores_ativos)
+            _cart_cnpjs_busca = set(df_cart["CNPJ_NORM"].dropna().unique()) if df_cart is not None else set()
+            _cart_map_busca   = df_cart.drop_duplicates("CNPJ_NORM").set_index("CNPJ_NORM")["VENDEDOR"].to_dict() if df_cart is not None else {}
+            _vends_busca      = get_vendedores_ativos()
+            consultor_resp, _na_cart_busca = resolve_vendedor(cnpj_sel, _cart_cnpjs_busca, _cart_map_busca, _vends_busca)
 
             # ── HERO ──
             nome_exib = safe_str(last.get("NOME_FANTASIA","")) if safe_str(last.get("NOME_FANTASIA","")) != "—" else safe_str(last.get("NOMEPROPRIETARIO",""))
@@ -1840,12 +1859,11 @@ if pagina == "busca":
             badge_h = f'<span class="badge {badge_class(cls_raw)}">{cls_raw}</span>' if cls_raw != "—" else ""
             resp_h = ""
             if consultor_resp and consultor_resp != "—":
-                # Se o vendedor vem da carteira, mostramos com ícone de usuário, se for distribuído, mostramos com ícone de localização
-                is_da_carteira = cart_row and safe_str(cart_row.get("VENDEDOR","")) == consultor_resp
-                icon = "👤" if is_da_carteira else "⚖️"
-                bg_color = "#e8f0ff" if is_da_carteira else "#f0f0f0"
-                text_color = "#0044aa" if is_da_carteira else "#555555"
-                resp_h += f'<span style="background:{bg_color};color:{text_color};padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;margin-right:6px;">{icon} {consultor_resp}</span>'
+                icon = "👤" if _na_cart_busca else "⚠️"
+                bg_color = "#e8f0ff" if _na_cart_busca else "#fff3cd"
+                text_color = "#0044aa" if _na_cart_busca else "#994400"
+                status_tag = "" if _na_cart_busca else " <small style='font-size:9px;'> NÃO CADASTRADO</small>"
+                resp_h += f'<span style="background:{bg_color};color:{text_color};padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;margin-right:6px;">{icon} {consultor_resp}{status_tag}</span>'
 
             st.markdown(f"""
             <div class="client-hero">
@@ -2137,18 +2155,21 @@ if pagina == "busca":
                 cart_row = cr.iloc[0].to_dict() if not cr.empty else None
 
             vendedores_ativos = get_vendedores_ativos()
-            consultor_resp = get_vendedor_final(cnpj_sel, cart_row, vendedores_ativos)
+            _cart_cnpjs_busca = set(df_cart["CNPJ_NORM"].dropna().unique()) if df_cart is not None else set()
+            _cart_map_busca   = df_cart.drop_duplicates("CNPJ_NORM").set_index("CNPJ_NORM")["VENDEDOR"].to_dict() if df_cart is not None else {}
+            _vends_busca      = get_vendedores_ativos()
+            consultor_resp, _na_cart_busca = resolve_vendedor(cnpj_sel, _cart_cnpjs_busca, _cart_map_busca, _vends_busca)
 
             nome_exib = safe_str(last.get("NOME_FANTASIA","")) if safe_str(last.get("NOME_FANTASIA","")) != "—" else safe_str(last.get("NOMEPROPRIETARIO",""))
             cls_raw = safe_str(cart_row.get("Classificação Mercedes","")) if cart_row else "—"
             badge_h = f'<span class="badge {badge_class(cls_raw)}">{cls_raw}</span>' if cls_raw != "—" else ""
             resp_h = ""
             if consultor_resp and consultor_resp != "—":
-                is_da_carteira = cart_row and safe_str(cart_row.get("VENDEDOR","")) == consultor_resp
-                icon = "👤" if is_da_carteira else "⚖️"
-                bg_color = "#e8f0ff" if is_da_carteira else "#f0f0f0"
-                text_color = "#0044aa" if is_da_carteira else "#555555"
-                resp_h += f'<span style="background:{bg_color};color:{text_color};padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;margin-right:6px;">{icon} {consultor_resp}</span>'
+                icon = "👤" if _na_cart_busca else "⚠️"
+                bg_color = "#e8f0ff" if _na_cart_busca else "#fff3cd"
+                text_color = "#0044aa" if _na_cart_busca else "#994400"
+                status_tag = "" if _na_cart_busca else " <small style='font-size:9px;'> NÃO CADASTRADO</small>"
+                resp_h += f'<span style="background:{bg_color};color:{text_color};padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;margin-right:6px;">{icon} {consultor_resp}{status_tag}</span>'
 
             st.markdown(f"""
             <div class="client-hero">
@@ -2377,6 +2398,11 @@ elif pagina == "emplacamentos":
         Nigris=("Concessionário", lambda x: is_denigris(x).sum()),
     ).reset_index().sort_values("Total", ascending=False).head(3).reset_index(drop=True)
 
+    # Preparar mapa resolve_vendedor para uso nos quadrantes
+    _cart_cnpjs_emp = set(df_cart["CNPJ_NORM"].dropna().unique()) if df_cart is not None else set()
+    _cart_map_emp   = df_cart.drop_duplicates("CNPJ_NORM").set_index("CNPJ_NORM")["VENDEDOR"].to_dict() if df_cart is not None else {}
+    _vends_emp      = get_vendedores_ativos()
+
     # Cards dos quadrantes
     c1, c2 = st.columns(2)
     with c1:
@@ -2390,9 +2416,13 @@ elif pagina == "emplacamentos":
             </div>
         </div>""", unsafe_allow_html=True)
         if not q1_df.empty:
-            _q1_cols = [c for c in ["NOMEPROPRIETARIO","Modelo","Data emplacamento","Concessionário"] if c in q1_df.columns]
+            _q1_cols = [c for c in ["NOMEPROPRIETARIO","Modelo","Data emplacamento","NO_CIDADE","Concessionário","CNPJ_NORM"] if c in q1_df.columns]
             q1_show = q1_df.sort_values("Data emplacamento", ascending=False)[_q1_cols].copy()
-            q1_show = q1_show.rename(columns={"NOMEPROPRIETARIO":"Cliente","Data emplacamento":"Data","Concessionário":"Concessionária"})
+            q1_show["Vendedor"] = q1_show["CNPJ_NORM"].apply(
+                lambda c: fmt_vendedor(*resolve_vendedor(c, _cart_cnpjs_emp, _cart_map_emp, _vends_emp))
+            )
+            q1_show = q1_show.drop(columns=["CNPJ_NORM"])
+            q1_show = q1_show.rename(columns={"NOMEPROPRIETARIO":"Cliente","Data emplacamento":"Data","NO_CIDADE":"Cidade","Concessionário":"Concessionária"})
             q1_show["Data"] = pd.to_datetime(q1_show["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
             st.dataframe(q1_show.head(10), use_container_width=True, hide_index=True)
 
@@ -2401,14 +2431,18 @@ elif pagina == "emplacamentos":
             <div class="quadrant-header">
                 <div>
                     <div class="quadrant-title">🟡 Área sem Cadastro</div>
-                    <div style="font-size:11px;color:#8a95b0;margin-top:2px;">Emplacaram na sua área, sem vínculo na carteira</div>
+                    <div style="font-size:11px;color:#8a95b0;margin-top:2px;">Emplacaram sem vínculo na carteira</div>
                 </div>
                 <div class="quadrant-count q-yellow">{len(q2_df["CNPJ_NORM"].unique()) if not q2_df.empty else 0}</div>
             </div>
         </div>""", unsafe_allow_html=True)
         if not q2_df.empty:
-            _q2_cols = [c for c in ["NOMEPROPRIETARIO","Modelo","Data emplacamento","NO_CIDADE","Concessionário"] if c in q2_df.columns]
+            _q2_cols = [c for c in ["NOMEPROPRIETARIO","Modelo","Data emplacamento","NO_CIDADE","Concessionário","CNPJ_NORM"] if c in q2_df.columns]
             q2_show = q2_df.sort_values("Data emplacamento", ascending=False)[_q2_cols].copy()
+            q2_show["Vendedor Atribuído"] = q2_show["CNPJ_NORM"].apply(
+                lambda c: fmt_vendedor(*resolve_vendedor(c, _cart_cnpjs_emp, _cart_map_emp, _vends_emp))
+            )
+            q2_show = q2_show.drop(columns=["CNPJ_NORM"])
             q2_show = q2_show.rename(columns={"NOMEPROPRIETARIO":"Cliente","Data emplacamento":"Data","NO_CIDADE":"Cidade","Concessionário":"Concessionária"})
             q2_show["Data"] = pd.to_datetime(q2_show["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
             st.dataframe(q2_show.head(10), use_container_width=True, hide_index=True)
@@ -2615,9 +2649,16 @@ elif pagina == "carteira":
     st.markdown(f'<div class="alert-red">⚠️ <strong>{len(inativos_2a)} clientes</strong> sem comprar há mais de 4 anos — considere revisar a carteira</div>', unsafe_allow_html=True)
 
     if not inativos_2a.empty:
+        _cart_cnpjs_cv = set(df_cart["CNPJ_NORM"].dropna().unique()) if df_cart is not None else set()
+        _cart_map_cv   = df_cart.drop_duplicates("CNPJ_NORM").set_index("CNPJ_NORM")["VENDEDOR"].to_dict() if df_cart is not None else {}
+        _vends_cv      = get_vendedores_ativos()
         cols_in = ["Nome","CPF/CNPJ","VENDEDOR","UltimaCompra","MesesSem","Classificação Mercedes"]
         cols_in = [c for c in cols_in if c in inativos_2a.columns]
         inativos_show = inativos_2a[cols_in].copy()
+        if "CNPJ_NORM" in inativos_2a.columns:
+            inativos_show["Status Cadastro"] = inativos_2a["CNPJ_NORM"].apply(
+                lambda c: "📋 Na Carteira" if c in _cart_cnpjs_cv else "⚠️ NÃO CADASTRADO"
+            )
         if "UltimaCompra" in inativos_show.columns:
             inativos_show["UltimaCompra"] = pd.to_datetime(inativos_show["UltimaCompra"], errors="coerce").dt.strftime("%d/%m/%Y").fillna("Nunca")
         inativos_show["MesesSem"] = inativos_show["MesesSem"].apply(lambda x: f"{x} meses" if x < 999 else "Sem registro")
@@ -3065,12 +3106,15 @@ elif pagina == "painel":
             .sort_values("QtdConc", ascending=False)
         )
 
-        # Adicionar vendedor e status de cadastro
-        alerta_agg[["Vendedor", "NaoCad"]] = pd.DataFrame(
-            alerta_agg["CNPJ_NORM"].apply(lambda c: _vend_alerta(c)).tolist(),
-            index=alerta_agg.index
-        )
-        alerta_agg["Status"] = alerta_agg["NaoCad"].map({True: "⚠️ NÃO CADASTRADO", False: "📋 Na Carteira"})
+        # Adicionar vendedor e status de cadastro via resolve_vendedor central
+        _cart_cnpjs_p = set(df_cart["CNPJ_NORM"].dropna().unique()) if df_cart is not None else set()
+        _cart_map_p   = df_cart.drop_duplicates("CNPJ_NORM").set_index("CNPJ_NORM")["VENDEDOR"].to_dict() if df_cart is not None else {}
+        _vends_p      = get_vendedores_ativos()
+
+        _rv = alerta_agg["CNPJ_NORM"].apply(lambda c: resolve_vendedor(c, _cart_cnpjs_p, _cart_map_p, _vends_p))
+        alerta_agg["Vendedor"]  = _rv.apply(lambda x: x[0])
+        alerta_agg["NaoCad"]    = _rv.apply(lambda x: not x[1])
+        alerta_agg["Status"]    = alerta_agg["NaoCad"].map({True: "⚠️ NÃO CADASTRADO", False: "📋 Na Carteira"})
         alerta_agg["UltimaData"] = pd.to_datetime(alerta_agg["UltimaData"], errors="coerce").dt.strftime("%d/%m/%Y")
         alerta_agg["Nome"] = alerta_agg["Nome"].str.title()
         alerta_agg["Cidade"] = alerta_agg["Cidade"].str.title()
