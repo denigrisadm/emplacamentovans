@@ -558,6 +558,100 @@ def _render_rf_tab(cnpj_sel, last, btn_key):
         else:
             st.info("Nenhum sócio encontrado na base pública da Receita Federal.")
         st.markdown('<div style="font-size:10px;color:#b0b8cc;margin-top:16px;text-align:center;">Fonte: API pública CNPJ.ws / BrasilAPI · Dados da Receita Federal do Brasil</div>', unsafe_allow_html=True)
+
+        # ── INSCRIÇÃO ESTADUAL ──
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown('<div class="sec-title">📄 Inscrição Estadual</div>', unsafe_allow_html=True)
+
+        ie_btn_key = f"btn_ie_{btn_key}"
+        ie_ss_key  = f"ie_{cnpj_rf}"
+
+        col_ie1, col_ie2 = st.columns([2, 3])
+        with col_ie1:
+            btn_ie = st.button("🔎 Consultar Inscrição Estadual", use_container_width=True, key=ie_btn_key)
+        with col_ie2:
+            st.markdown(
+                f'<div style="padding:8px 12px;background:#f0fff4;border-radius:8px;font-size:12px;color:#4a5568;">'
+                f'Via cnpja.com · CNPJ: <strong>{cnpj_fmt}</strong></div>',
+                unsafe_allow_html=True
+            )
+
+        if btn_ie:
+            if len(cnpj_rf) != 14:
+                st.warning("CNPJ inválido para consulta.")
+            else:
+                with st.spinner("Consultando Inscrição Estadual..."):
+                    try:
+                        import urllib.request as _ur_ie, urllib.error as _ue_ie
+                        url_ie = f"https://publica.cnpja.com/office/{cnpj_rf}"
+                        req_ie = _ur_ie.Request(url_ie, headers={"User-Agent": "Mozilla/5.0"})
+                        with _ur_ie.urlopen(req_ie, timeout=15) as r_ie:
+                            dados_ie = json.loads(r_ie.read().decode())
+                        st.session_state[ie_ss_key] = dados_ie
+                    except Exception as e_ie:
+                        st.error(f"Erro ao consultar: {e_ie}. A API cnpja.com pode exigir cadastro para este CNPJ.")
+
+        dados_ie = st.session_state.get(ie_ss_key)
+        if dados_ie:
+            # Extrair inscrições estaduais
+            registrations = dados_ie.get("registrations") or dados_ie.get("sintegra", {}).get("registrations", [])
+            if registrations:
+                for reg in registrations:
+                    uf_ie    = reg.get("state", "—")
+                    ie_num   = reg.get("number", "—")
+                    ie_sit   = reg.get("enabled", None)
+                    ie_type  = reg.get("type", {}).get("text", "") if isinstance(reg.get("type"), dict) else str(reg.get("type",""))
+                    ie_dt    = reg.get("statusDate", reg.get("status_date","—"))
+                    cor_sit  = "#1E7E34" if ie_sit else "#C0392B"
+                    sit_txt  = "HABILITADA" if ie_sit else "DESABILITADA"
+                    st.markdown(f"""
+                    <div style="background:#fff;border:1px solid #e2e8f0;border-left:5px solid {cor_sit};
+                                border-radius:10px;padding:14px 18px;margin-bottom:10px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+                            <div>
+                                <div style="font-size:13px;font-weight:700;color:#0a1628;">
+                                    🏛️ {uf_ie} — IE: <span style="font-family:monospace;">{ie_num}</span>
+                                </div>
+                                <div style="font-size:11px;color:#8a95b0;margin-top:3px;">{ie_type}</div>
+                            </div>
+                            <div style="background:{cor_sit};color:#fff;padding:4px 12px;
+                                        border-radius:20px;font-size:11px;font-weight:700;">
+                                ● {sit_txt}
+                            </div>
+                        </div>
+                        {"<div style='font-size:10px;color:#aaa;margin-top:6px;'>Atualizado: "+ie_dt+"</div>" if ie_dt and ie_dt != "—" else ""}
+                    </div>
+                    """, unsafe_allow_html=True)
+            else:
+                # Tentar extrair de outras estruturas da resposta
+                sintegra = dados_ie.get("sintegra", {})
+                if sintegra:
+                    ie_raw = sintegra.get("ie") or sintegra.get("inscricao_estadual", "Não encontrada")
+                    uf_raw = sintegra.get("uf", "—")
+                    st.markdown(f"""
+                    <div style="background:#fff;border:1px solid #e2e8f0;border-left:5px solid #c8a84b;
+                                border-radius:10px;padding:14px 18px;">
+                        <div style="font-size:13px;font-weight:700;color:#0a1628;">
+                            🏛️ {uf_raw} — IE: <span style="font-family:monospace;">{ie_raw}</span>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.info("Nenhuma inscrição estadual encontrada para este CNPJ na base pública.")
+            st.markdown(
+                '<div style="font-size:10px;color:#b0b8cc;margin-top:12px;text-align:center;">'
+                'Fonte: cnpja.com · Dados do Sintegra / SEFAZ estadual</div>',
+                unsafe_allow_html=True
+            )
+        elif not btn_ie:
+            st.markdown("""
+            <div style="text-align:center;padding:28px 20px;color:#8a95b0;">
+                <div style="font-size:32px;margin-bottom:10px;">📄</div>
+                <div style="font-size:13px;">Clique em <strong>Consultar Inscrição Estadual</strong><br>
+                para buscar a situação no Sintegra/SEFAZ.</div>
+            </div>
+            """, unsafe_allow_html=True)
+
     else:
         st.markdown("""
         <div style="text-align:center;padding:48px 20px;color:#8a95b0;">
