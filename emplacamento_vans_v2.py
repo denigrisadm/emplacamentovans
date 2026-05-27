@@ -559,98 +559,118 @@ def _render_rf_tab(cnpj_sel, last, btn_key):
             st.info("Nenhum sócio encontrado na base pública da Receita Federal.")
         st.markdown('<div style="font-size:10px;color:#b0b8cc;margin-top:16px;text-align:center;">Fonte: API pública CNPJ.ws / BrasilAPI · Dados da Receita Federal do Brasil</div>', unsafe_allow_html=True)
 
-        # ── INSCRIÇÃO ESTADUAL ──
+        # ── INSCRIÇÃO ESTADUAL (fetch via browser JS) ──
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown('<div class="sec-title">📄 Inscrição Estadual</div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div style="padding:8px 14px;background:#f0fff4;border-radius:8px;font-size:12px;color:#4a5568;margin-bottom:12px;">'
+            f'Consulta ao Sintegra/SEFAZ via cnpja.com · CNPJ: <strong>{cnpj_fmt}</strong></div>',
+            unsafe_allow_html=True
+        )
 
-        ie_btn_key = f"btn_ie_{btn_key}"
-        ie_ss_key  = f"ie_{cnpj_rf}"
+        # Widget HTML+JS: faz o fetch no browser, renderiza o resultado inline
+        ie_html = f"""
+        <div id="ie-root" style="font-family:Calibri,sans-serif;">
+          <button id="ie-btn" onclick="consultarIE()" style="
+            background:#1E7E34;color:#fff;border:none;border-radius:8px;
+            padding:9px 20px;font-size:13px;font-weight:700;cursor:pointer;
+            display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+            🔎 Consultar Inscrição Estadual
+          </button>
+          <div id="ie-result"></div>
+        </div>
+        <script>
+        async function consultarIE() {{
+          const btn = document.getElementById('ie-btn');
+          const res = document.getElementById('ie-result');
+          btn.disabled = true;
+          btn.innerHTML = '⏳ Consultando...';
+          res.innerHTML = '<div style="color:#8a95b0;font-size:13px;padding:12px;">Buscando dados do Sintegra...</div>';
 
-        col_ie1, col_ie2 = st.columns([2, 3])
-        with col_ie1:
-            btn_ie = st.button("🔎 Consultar Inscrição Estadual", use_container_width=True, key=ie_btn_key)
-        with col_ie2:
-            st.markdown(
-                f'<div style="padding:8px 12px;background:#f0fff4;border-radius:8px;font-size:12px;color:#4a5568;">'
-                f'Via cnpja.com · CNPJ: <strong>{cnpj_fmt}</strong></div>',
-                unsafe_allow_html=True
-            )
+          const cnpj = '{cnpj_rf}';
+          const urls = [
+            `https://publica.cnpja.com/office/${{cnpj}}`,
+            `https://publica.cnpja.com/office/${{cnpj}}?registrations=BR`,
+          ];
 
-        if btn_ie:
-            if len(cnpj_rf) != 14:
-                st.warning("CNPJ inválido para consulta.")
-            else:
-                with st.spinner("Consultando Inscrição Estadual..."):
-                    try:
-                        import urllib.request as _ur_ie, urllib.error as _ue_ie
-                        url_ie = f"https://publica.cnpja.com/office/{cnpj_rf}"
-                        req_ie = _ur_ie.Request(url_ie, headers={"User-Agent": "Mozilla/5.0"})
-                        with _ur_ie.urlopen(req_ie, timeout=15) as r_ie:
-                            dados_ie = json.loads(r_ie.read().decode())
-                        st.session_state[ie_ss_key] = dados_ie
-                    except Exception as e_ie:
-                        st.error(f"Erro ao consultar: {e_ie}. A API cnpja.com pode exigir cadastro para este CNPJ.")
+          let data = null;
+          let lastErr = '';
 
-        dados_ie = st.session_state.get(ie_ss_key)
-        if dados_ie:
-            # Extrair inscrições estaduais
-            registrations = dados_ie.get("registrations") or dados_ie.get("sintegra", {}).get("registrations", [])
-            if registrations:
-                for reg in registrations:
-                    uf_ie    = reg.get("state", "—")
-                    ie_num   = reg.get("number", "—")
-                    ie_sit   = reg.get("enabled", None)
-                    ie_type  = reg.get("type", {}).get("text", "") if isinstance(reg.get("type"), dict) else str(reg.get("type",""))
-                    ie_dt    = reg.get("statusDate", reg.get("status_date","—"))
-                    cor_sit  = "#1E7E34" if ie_sit else "#C0392B"
-                    sit_txt  = "HABILITADA" if ie_sit else "DESABILITADA"
-                    st.markdown(f"""
-                    <div style="background:#fff;border:1px solid #e2e8f0;border-left:5px solid {cor_sit};
-                                border-radius:10px;padding:14px 18px;margin-bottom:10px;">
-                        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
-                            <div>
-                                <div style="font-size:13px;font-weight:700;color:#0a1628;">
-                                    🏛️ {uf_ie} — IE: <span style="font-family:monospace;">{ie_num}</span>
-                                </div>
-                                <div style="font-size:11px;color:#8a95b0;margin-top:3px;">{ie_type}</div>
-                            </div>
-                            <div style="background:{cor_sit};color:#fff;padding:4px 12px;
-                                        border-radius:20px;font-size:11px;font-weight:700;">
-                                ● {sit_txt}
-                            </div>
-                        </div>
-                        {"<div style='font-size:10px;color:#aaa;margin-top:6px;'>Atualizado: "+ie_dt+"</div>" if ie_dt and ie_dt != "—" else ""}
+          for (const url of urls) {{
+            try {{
+              const r = await fetch(url, {{
+                headers: {{ 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' }},
+                signal: AbortSignal.timeout(15000)
+              }});
+              if (r.ok) {{ data = await r.json(); break; }}
+              else {{ lastErr = `HTTP ${{r.status}}`; }}
+            }} catch(e) {{ lastErr = e.message; }}
+          }}
+
+          btn.disabled = false;
+          btn.innerHTML = '🔎 Consultar Inscrição Estadual';
+
+          if (!data) {{
+            res.innerHTML = `<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:8px;padding:14px;font-size:13px;color:#856404;">
+              ⚠️ Não foi possível consultar: ${{lastErr}}<br>
+              <small>A API cnpja.com pode requerer autenticação ou estar indisponível no momento.</small>
+            </div>`;
+            return;
+          }}
+
+          // Extrair registrations (inscrições estaduais)
+          const regs = data.registrations || (data.sintegra && data.sintegra.registrations) || [];
+
+          if (regs.length === 0) {{
+            // Tentar campos alternativos
+            const ie = (data.sintegra && (data.sintegra.ie || data.sintegra.inscricao_estadual))
+                       || data.ie || data.inscricao_estadual || null;
+            const uf = (data.sintegra && data.sintegra.uf) || data.state || '—';
+            if (ie) {{
+              res.innerHTML = `<div style="background:#fff;border:1px solid #e2e8f0;border-left:5px solid #c8a84b;border-radius:10px;padding:14px 18px;">
+                <div style="font-weight:700;font-size:13px;color:#0a1628;">🏛️ ${{uf}} — IE: <span style="font-family:monospace;">${{ie}}</span></div>
+              </div>`;
+            }} else {{
+              res.innerHTML = `<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px;font-size:13px;color:#8a95b0;text-align:center;">
+                Nenhuma inscrição estadual encontrada para este CNPJ na base pública.
+              </div>`;
+            }}
+            res.innerHTML += '<div style="font-size:10px;color:#b0b8cc;margin-top:10px;text-align:center;">Fonte: cnpja.com · Sintegra / SEFAZ estadual</div>';
+            return;
+          }}
+
+          let html = '';
+          for (const reg of regs) {{
+            const uf      = reg.state || '—';
+            const num     = reg.number || '—';
+            const enabled = reg.enabled !== false;
+            const type    = (reg.type && reg.type.text) ? reg.type.text : (reg.type || '');
+            const dt      = reg.statusDate || reg.status_date || '';
+            const cor     = enabled ? '#1E7E34' : '#C0392B';
+            const sit     = enabled ? '● HABILITADA' : '● DESABILITADA';
+            html += `
+              <div style="background:#fff;border:1px solid #e2e8f0;border-left:5px solid ${{cor}};
+                          border-radius:10px;padding:14px 18px;margin-bottom:10px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+                  <div>
+                    <div style="font-weight:700;font-size:13px;color:#0a1628;">
+                      🏛️ ${{uf}} — IE: <span style="font-family:monospace;">${{num}}</span>
                     </div>
-                    """, unsafe_allow_html=True)
-            else:
-                # Tentar extrair de outras estruturas da resposta
-                sintegra = dados_ie.get("sintegra", {})
-                if sintegra:
-                    ie_raw = sintegra.get("ie") or sintegra.get("inscricao_estadual", "Não encontrada")
-                    uf_raw = sintegra.get("uf", "—")
-                    st.markdown(f"""
-                    <div style="background:#fff;border:1px solid #e2e8f0;border-left:5px solid #c8a84b;
-                                border-radius:10px;padding:14px 18px;">
-                        <div style="font-size:13px;font-weight:700;color:#0a1628;">
-                            🏛️ {uf_raw} — IE: <span style="font-family:monospace;">{ie_raw}</span>
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                else:
-                    st.info("Nenhuma inscrição estadual encontrada para este CNPJ na base pública.")
-            st.markdown(
-                '<div style="font-size:10px;color:#b0b8cc;margin-top:12px;text-align:center;">'
-                'Fonte: cnpja.com · Dados do Sintegra / SEFAZ estadual</div>',
-                unsafe_allow_html=True
-            )
-        elif not btn_ie:
-            st.markdown("""
-            <div style="text-align:center;padding:28px 20px;color:#8a95b0;">
-                <div style="font-size:32px;margin-bottom:10px;">📄</div>
-                <div style="font-size:13px;">Clique em <strong>Consultar Inscrição Estadual</strong><br>
-                para buscar a situação no Sintegra/SEFAZ.</div>
-            </div>
-            """, unsafe_allow_html=True)
+                    ${{type ? `<div style="font-size:11px;color:#8a95b0;margin-top:3px;">${{type}}</div>` : ''}}
+                  </div>
+                  <div style="background:${{cor}};color:#fff;padding:4px 12px;border-radius:20px;font-size:11px;font-weight:700;">
+                    ${{sit}}
+                  </div>
+                </div>
+                ${{dt ? `<div style="font-size:10px;color:#aaa;margin-top:6px;">Atualizado: ${{dt}}</div>` : ''}}
+              </div>`;
+          }}
+          html += '<div style="font-size:10px;color:#b0b8cc;margin-top:10px;text-align:center;">Fonte: cnpja.com · Sintegra / SEFAZ estadual</div>';
+          res.innerHTML = html;
+        }}
+        </script>
+        """
+        st.components.v1.html(ie_html, height=320, scrolling=False)
 
     else:
         st.markdown("""
