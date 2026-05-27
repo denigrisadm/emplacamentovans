@@ -563,114 +563,111 @@ def _render_rf_tab(cnpj_sel, last, btn_key):
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown('<div class="sec-title">📄 Inscrição Estadual</div>', unsafe_allow_html=True)
         st.markdown(
-            f'<div style="padding:8px 14px;background:#f0fff4;border-radius:8px;font-size:12px;color:#4a5568;margin-bottom:12px;">'
-            f'Consulta ao Sintegra/SEFAZ via cnpja.com · CNPJ: <strong>{cnpj_fmt}</strong></div>',
+            f'<div style="padding:8px 14px;background:#f0fff4;border-radius:8px;font-size:12px;'
+            f'color:#4a5568;margin-bottom:12px;">'
+            f'Consulta ao Sintegra/SEFAZ · CNPJ: <strong>{cnpj_fmt}</strong></div>',
             unsafe_allow_html=True
         )
 
-        # Widget HTML+JS: faz o fetch no browser, renderiza o resultado inline
-        ie_html = f"""
-        <div id="ie-root" style="font-family:Calibri,sans-serif;">
-          <button id="ie-btn" onclick="consultarIE()" style="
-            background:#1E7E34;color:#fff;border:none;border-radius:8px;
-            padding:9px 20px;font-size:13px;font-weight:700;cursor:pointer;
-            display:flex;align-items:center;gap:8px;margin-bottom:12px;">
-            🔎 Consultar Inscrição Estadual
-          </button>
-          <div id="ie-result"></div>
+        ie_html = f"""<!DOCTYPE html>
+<html><body style="margin:0;padding:0;font-family:Calibri,Arial,sans-serif;background:transparent;">
+<button id="ie-btn" onclick="consultarIE()" style="background:#1E7E34;color:#fff;border:none;
+  border-radius:8px;padding:10px 22px;font-size:13px;font-weight:700;cursor:pointer;margin-bottom:14px;">
+  \U0001f50e Consultar Inscri\u00e7\u00e3o Estadual
+</button>
+<div id="ie-result"></div>
+<script>
+const CNPJ = '{cnpj_rf}';
+async function tryFetch(url) {{
+  const r = await fetch(url, {{signal: AbortSignal.timeout(12000)}});
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}}
+function card(uf, num, hab, tipo, dt) {{
+  const cor = hab ? '#1E7E34' : '#C0392B';
+  const sit = hab ? '\u25cf HABILITADA' : '\u25cf DESABILITADA';
+  return `<div style="background:#fff;border:1px solid #e2e8f0;border-left:5px solid ${{cor}};
+    border-radius:10px;padding:14px 18px;margin-bottom:10px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+      <div>
+        <div style="font-weight:700;font-size:14px;color:#0a1628;">
+          \U0001f3db\ufe0f ${{uf||'\u2014'}} \u2014 IE: <span style="font-family:monospace">${{num||'\u2014'}}</span>
         </div>
-        <script>
-        async function consultarIE() {{
-          const btn = document.getElementById('ie-btn');
-          const res = document.getElementById('ie-result');
-          btn.disabled = true;
-          btn.innerHTML = '⏳ Consultando...';
-          res.innerHTML = '<div style="color:#8a95b0;font-size:13px;padding:12px;">Buscando dados do Sintegra...</div>';
-
-          const cnpj = '{cnpj_rf}';
-          const urls = [
-            `https://publica.cnpja.com/office/${{cnpj}}`,
-            `https://publica.cnpja.com/office/${{cnpj}}?registrations=BR`,
-          ];
-
-          let data = null;
-          let lastErr = '';
-
-          for (const url of urls) {{
-            try {{
-              const r = await fetch(url, {{
-                headers: {{ 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' }},
-                signal: AbortSignal.timeout(15000)
-              }});
-              if (r.ok) {{ data = await r.json(); break; }}
-              else {{ lastErr = `HTTP ${{r.status}}`; }}
-            }} catch(e) {{ lastErr = e.message; }}
-          }}
-
-          btn.disabled = false;
-          btn.innerHTML = '🔎 Consultar Inscrição Estadual';
-
-          if (!data) {{
-            res.innerHTML = `<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:8px;padding:14px;font-size:13px;color:#856404;">
-              ⚠️ Não foi possível consultar: ${{lastErr}}<br>
-              <small>A API cnpja.com pode requerer autenticação ou estar indisponível no momento.</small>
-            </div>`;
-            return;
-          }}
-
-          // Extrair registrations (inscrições estaduais)
-          const regs = data.registrations || (data.sintegra && data.sintegra.registrations) || [];
-
-          if (regs.length === 0) {{
-            // Tentar campos alternativos
-            const ie = (data.sintegra && (data.sintegra.ie || data.sintegra.inscricao_estadual))
-                       || data.ie || data.inscricao_estadual || null;
-            const uf = (data.sintegra && data.sintegra.uf) || data.state || '—';
-            if (ie) {{
-              res.innerHTML = `<div style="background:#fff;border:1px solid #e2e8f0;border-left:5px solid #c8a84b;border-radius:10px;padding:14px 18px;">
-                <div style="font-weight:700;font-size:13px;color:#0a1628;">🏛️ ${{uf}} — IE: <span style="font-family:monospace;">${{ie}}</span></div>
-              </div>`;
-            }} else {{
-              res.innerHTML = `<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px;font-size:13px;color:#8a95b0;text-align:center;">
-                Nenhuma inscrição estadual encontrada para este CNPJ na base pública.
-              </div>`;
-            }}
-            res.innerHTML += '<div style="font-size:10px;color:#b0b8cc;margin-top:10px;text-align:center;">Fonte: cnpja.com · Sintegra / SEFAZ estadual</div>';
-            return;
-          }}
-
-          let html = '';
-          for (const reg of regs) {{
-            const uf      = reg.state || '—';
-            const num     = reg.number || '—';
-            const enabled = reg.enabled !== false;
-            const type    = (reg.type && reg.type.text) ? reg.type.text : (reg.type || '');
-            const dt      = reg.statusDate || reg.status_date || '';
-            const cor     = enabled ? '#1E7E34' : '#C0392B';
-            const sit     = enabled ? '● HABILITADA' : '● DESABILITADA';
-            html += `
-              <div style="background:#fff;border:1px solid #e2e8f0;border-left:5px solid ${{cor}};
-                          border-radius:10px;padding:14px 18px;margin-bottom:10px;">
-                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
-                  <div>
-                    <div style="font-weight:700;font-size:13px;color:#0a1628;">
-                      🏛️ ${{uf}} — IE: <span style="font-family:monospace;">${{num}}</span>
-                    </div>
-                    ${{type ? `<div style="font-size:11px;color:#8a95b0;margin-top:3px;">${{type}}</div>` : ''}}
-                  </div>
-                  <div style="background:${{cor}};color:#fff;padding:4px 12px;border-radius:20px;font-size:11px;font-weight:700;">
-                    ${{sit}}
-                  </div>
-                </div>
-                ${{dt ? `<div style="font-size:10px;color:#aaa;margin-top:6px;">Atualizado: ${{dt}}</div>` : ''}}
-              </div>`;
-          }}
-          html += '<div style="font-size:10px;color:#b0b8cc;margin-top:10px;text-align:center;">Fonte: cnpja.com · Sintegra / SEFAZ estadual</div>';
-          res.innerHTML = html;
+        ${{tipo ? '<div style="font-size:11px;color:#8a95b0;margin-top:3px;">'+tipo+'</div>' : ''}}
+      </div>
+      <div style="background:'+cor+';color:#fff;padding:5px 14px;border-radius:20px;font-size:12px;font-weight:700;">
+        ${{sit}}
+      </div>
+    </div>
+    ${{dt ? '<div style="font-size:10px;color:#aaa;margin-top:5px;">Atualizado: '+dt+'</div>' : ''}}
+  </div>`;
+}}
+function setResult(html) {{
+  document.getElementById('ie-result').innerHTML = html +
+    '<div style="font-size:10px;color:#b0b8cc;margin-top:8px;text-align:center;">Fonte: BrasilAPI / CNPJ.ws / ReceitaWS</div>';
+}}
+async function consultarIE() {{
+  const btn = document.getElementById('ie-btn');
+  btn.disabled = true; btn.textContent = '\u23f3 Consultando...';
+  document.getElementById('ie-result').innerHTML = '<div style="color:#8a95b0;padding:10px;">Buscando dados...</div>';
+  let cards = ''; let found = false;
+  // API 1: BrasilAPI
+  try {{
+    const d = await tryFetch('https://brasilapi.com.br/api/cnpj/v1/'+CNPJ);
+    const ie = d.inscricao_estadual || d.ie;
+    if (ie && String(ie).trim() && !'null undefined'.includes(String(ie).toLowerCase())) {{
+      cards += card((d.uf||'SP').toUpperCase(), ie, true, 'BrasilAPI', '');
+      found = true;
+    }}
+  }} catch(e) {{}}
+  // API 2: CNPJ.ws
+  if (!found) {{
+    try {{
+      const d = await tryFetch('https://publica.cnpj.ws/cnpj/'+CNPJ);
+      const est = d.estabelecimento || d;
+      const regs = est.inscricoes_estaduais || [];
+      if (regs.length > 0) {{
+        for (const reg of regs) {{
+          cards += card(reg.estado?.sigla||'—', reg.inscricao_estadual||'—',
+            reg.ativo !== false, reg.tipo||'CNPJ.ws', reg.atualizado_em||''); found=true;
         }}
-        </script>
-        """
-        st.components.v1.html(ie_html, height=320, scrolling=False)
+      }} else {{
+        const ie = est.inscricao_estadual || d.inscricao_estadual;
+        if (ie && String(ie).trim()) {{
+          cards += card((est.estado?.sigla||'SP').toUpperCase(), ie, true, 'CNPJ.ws', ''); found=true;
+        }}
+      }}
+    }} catch(e) {{}}
+  }}
+  // API 3: ReceitaWS
+  if (!found) {{
+    try {{
+      const d = await tryFetch('https://receitaws.com.br/v1/cnpj/'+CNPJ);
+      const ie = d.inscricao_estadual || d.ie;
+      if (ie && String(ie).trim() && !'null undefined'.includes(String(ie).toLowerCase())) {{
+        cards += card((d.uf||'SP').toUpperCase(), ie,
+          (d.situacao||'ATIVA').toUpperCase()==='ATIVA', 'ReceitaWS', d.ultima_atualizacao||''); found=true;
+      }}
+    }} catch(e) {{}}
+  }}
+  // API 4: cnpja.com
+  if (!found) {{
+    try {{
+      const d = await tryFetch('https://publica.cnpja.com/office/'+CNPJ);
+      const regs = d.registrations || [];
+      for (const reg of regs) {{
+        cards += card(reg.state||'—', reg.number||'—', reg.enabled!==false,
+          (typeof reg.type==='object' ? reg.type?.text : reg.type)||'cnpja.com', reg.statusDate||'');
+        found=true;
+      }}
+    }} catch(e) {{}}
+  }}
+  btn.disabled=false; btn.textContent='\U0001f50e Consultar Inscri\u00e7\u00e3o Estadual';
+  if (found) {{ setResult(cards); }}
+  else {{ setResult('<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px;font-size:13px;color:#8a95b0;text-align:center;">📋 Nenhuma inscri\u00e7\u00e3o estadual encontrada para este CNPJ.<br><small>Poss\u00edvel empresa isenta ou MEI sem IE.</small></div>'); }}
+}}
+</script></body></html>"""
+        st.components.v1.html(ie_html, height=360, scrolling=False)
 
     else:
         st.markdown("""
