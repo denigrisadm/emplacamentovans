@@ -2670,159 +2670,154 @@ elif pagina == "carteira":
 
     today = pd.Timestamp.now()
 
-    # ── Filtrar carteira por vendedor ──
-    if perfil in ("gestor", "gerente"):
+    # Filtrar por consultor (vendedor vê só a sua)
+    if perfil in ("gestor","gerente"):
         vends = ["Todos"] + sorted(df_cart["VENDEDOR"].dropna().unique().tolist())
         sel_vend = st.selectbox("Vendedor:", vends)
         cart_view = df_cart.copy() if sel_vend == "Todos" else df_cart[df_cart["VENDEDOR"] == sel_vend].copy()
     else:
-        cart_view = df_cart[df_cart["VENDEDOR"].str.strip().str.title() == cons_key.strip().title()].copy()
+        cart_view = df_cart[norm_str_series(df_cart["VENDEDOR"]) == norm_str(cons_key)].copy()
+        if cart_view.empty:
+            cart_view = df_cart[df_cart["VENDEDOR"].str.upper().str.strip() == cons_key.upper().strip()].copy()
+
+    # ── Adicionar clientes NÃO CADASTRADOS distribuídos para este vendedor ──
+    if df_emp is not None:
+        vendedores_ativos_cart = get_vendedores_ativos()
+        cnpjs_na_carteira_total = set(df_cart["CNPJ_NORM"].dropna().unique())
+        cnpjs_sem_cart = [c for c in df_emp["CNPJ_NORM"].unique() if c not in cnpjs_na_carteira_total]
+
+        if perfil == "vendedor":
+            # Clientes não cadastrados distribuídos para este vendedor
+            meus_nc = [c for c in cnpjs_sem_cart
+                       if get_consultor_distribuido(str(c), vendedores_ativos_cart) == cons_key]
+            if meus_nc:
+                nomes_nc = (df_emp[df_emp["CNPJ_NORM"].isin(meus_nc)]
+                            .sort_values("Data emplacamento")
+                            .groupby("CNPJ_NORM")
+                            .last()[["NOMEPROPRIETARIO","CPFCNPJPROPRIETARIO"]]
+                            .reset_index()
+                            .rename(columns={"NOMEPROPRIETARIO":"Nome","CPFCNPJPROPRIETARIO":"CPF/CNPJ"}))
+                nomes_nc["VENDEDOR"] = cons_key
+                nomes_nc["Classificação Mercedes"] = "NÃO CADASTRADO"
+                cart_view = pd.concat([cart_view, nomes_nc], ignore_index=True)
+        elif perfil in ("gestor","gerente") and (sel_vend == "Todos" or True):
+            # Para gestor/gerente: distribuir todos os não cadastrados e mostrar por vendedor
+            rows_nc = []
+            for c in cnpjs_sem_cart:
+                vend_nc = get_consultor_distribuido(str(c), vendedores_ativos_cart)
+                rows_nc.append({"CNPJ_NORM": c, "VENDEDOR_NC": vend_nc})
+            if rows_nc:
+                df_nc = pd.DataFrame(rows_nc)
+                # Se filtro específico de vendedor, filtrar
+                if perfil in ("gestor","gerente") and sel_vend != "Todos":
+                    df_nc = df_nc[df_nc["VENDEDOR_NC"] == sel_vend]
+                if not df_nc.empty:
+                    nomes_nc2 = (df_emp[df_emp["CNPJ_NORM"].isin(df_nc["CNPJ_NORM"].tolist())]
+                                 .sort_values("Data emplacamento")
+                                 .groupby("CNPJ_NORM")
+                                 .last()[["NOMEPROPRIETARIO","CPFCNPJPROPRIETARIO"]]
+                                 .reset_index()
+                                 .rename(columns={"NOMEPROPRIETARIO":"Nome","CPFCNPJPROPRIETARIO":"CPF/CNPJ"}))
+                    nomes_nc2 = nomes_nc2.merge(df_nc, on="CNPJ_NORM", how="left")
+                    nomes_nc2["VENDEDOR"] = nomes_nc2["VENDEDOR_NC"]
+                    nomes_nc2["Classificação Mercedes"] = "NÃO CADASTRADO"
+                    nomes_nc2 = nomes_nc2.drop(columns=["VENDEDOR_NC"])
+                    cart_view = pd.concat([cart_view, nomes_nc2], ignore_index=True)
 
     total_cart = len(cart_view)
 
-    # ── Cruzar com emplacamentos: última compra e total de compras ──
-    if df_emp is not None and not cart_view.empty:
-        cnpjs_view = cart_view["CNPJ_NORM"].unique()
-        emp_cart = df_emp[df_emp["CNPJ_NORM"].isin(cnpjs_view)].copy()
-
-        agg = emp_cart.groupby("CNPJ_NORM").agg(
-            UltimaCompra=("Data emplacamento", "max"),
-            TotalCompras=("Chassi", "count"),
-            Nigris=("Concessionário", lambda x: is_denigris(x).sum()),
-            UltimoModelo=("Modelo", "last"),
-            UltimaConcessionaria=("Concessionário", "last"),
-        ).reset_index()
-        agg["UltimaCompra"] = pd.to_datetime(agg["UltimaCompra"], errors="coerce")
-
-        cart_view = cart_view.merge(agg, on="CNPJ_NORM", how="left")
+    # Cruzar com emplacamentos para saber última compra
+    if df_emp is not None:
+        ultima_emp = df_emp.groupby("CNPJ_NORM")["Data emplacamento"].max().reset_index()
+        ultima_emp.columns = ["CNPJ_NORM","UltimaCompra"]
+        cart_view = cart_view.merge(ultima_emp, on="CNPJ_NORM", how="left")
+        def calc_meses(x):
+            try:
+                if pd.isna(x): return 999
+                rd = relativedelta(today, pd.Timestamp(x))
+                return int(rd.years * 12 + rd.months)
+            except: return 999
+        cart_view["MesesSem"] = cart_view["UltimaCompra"].apply(calc_meses)
     else:
         cart_view["UltimaCompra"] = pd.NaT
-        cart_view["TotalCompras"] = 0
-        cart_view["Nigris"] = 0
-        emp_cart = pd.DataFrame()
+        cart_view["MesesSem"] = 999
 
-    # ── Calcular meses sem comprar ──
-    def _meses(x):
-        try:
-            if pd.isna(x): return 999
-            rd = relativedelta(today, pd.Timestamp(x))
-            return int(rd.years * 12 + rd.months)
-        except: return 999
-
-    cart_view["MesesSem"] = cart_view["UltimaCompra"].apply(_meses)
     cart_view["MesesSem"] = pd.to_numeric(cart_view["MesesSem"], errors="coerce").fillna(999).astype(int)
+    inativos_2a = cart_view[cart_view["MesesSem"] > 48]
 
-    # Inativos = sem comprar há mais de 48 meses (4 anos) OU sem nenhum registro
-    inativos = cart_view[cart_view["MesesSem"] >= 48].copy()
-    ativos   = cart_view[cart_view["MesesSem"] <  48].copy()
-
-    # ── KPIs ──
-    k1, k2, k3, k4 = st.columns(4)
-    with k1:
-        st.markdown(f'<div class="kpi-card"><div class="kpi-label">Total Carteira</div>'
-                    f'<div class="kpi-value">{total_cart}</div></div>', unsafe_allow_html=True)
-    with k2:
-        st.markdown(f'<div class="kpi-card"><div class="kpi-label">Inativos +4 anos</div>'
-                    f'<div class="kpi-value red">{len(inativos)}</div>'
-                    f'<div class="kpi-sub">{round(len(inativos)/total_cart*100) if total_cart else 0}% da carteira</div></div>',
-                    unsafe_allow_html=True)
-    with k3:
-        st.markdown(f'<div class="kpi-card"><div class="kpi-label">Ativos últimos 4 anos</div>'
-                    f'<div class="kpi-value green">{len(ativos)}</div>'
-                    f'<div class="kpi-sub">{round(len(ativos)/total_cart*100) if total_cart else 0}% da carteira</div></div>',
-                    unsafe_allow_html=True)
+    # KPIs
+    k1,k2,k3,k4 = st.columns(4)
+    with k1: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Total Carteira</div><div class="kpi-value">{total_cart}</div></div>', unsafe_allow_html=True)
+    with k2: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Inativos +4 anos</div><div class="kpi-value red">{len(inativos_2a)}</div><div class="kpi-sub">Para revisão</div></div>', unsafe_allow_html=True)
+    with k3: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Ativos últimos 4a</div><div class="kpi-value green">{total_cart - len(inativos_2a)}</div></div>', unsafe_allow_html=True)
     with k4:
-        total_emp_cart = int(cart_view["TotalCompras"].sum()) if "TotalCompras" in cart_view.columns else 0
-        nigris_cart = int(cart_view["Nigris"].sum()) if "Nigris" in cart_view.columns else 0
-        pct_nigris = round(nigris_cart / total_emp_cart * 100) if total_emp_cart else 0
-        st.markdown(f'<div class="kpi-card"><div class="kpi-label">Emplacamentos (todos)</div>'
-                    f'<div class="kpi-value blue">{total_emp_cart}</div>'
-                    f'<div class="kpi-sub">{pct_nigris}% De Nigris</div></div>', unsafe_allow_html=True)
+        if df_emp is not None:
+            total_emp_cart = len(df_emp[df_emp["CNPJ_NORM"].isin(cart_view["CNPJ_NORM"])])
+            st.markdown(f'<div class="kpi-card"><div class="kpi-label">Emplacamentos</div><div class="kpi-value blue">{total_emp_cart}</div><div class="kpi-sub">na sua carteira</div></div>', unsafe_allow_html=True)
 
-    # ══════════════════════════════════════════
-    # SEÇÃO 1: INATIVOS +4 ANOS
-    # ══════════════════════════════════════════
-    st.markdown('<div class="sec-title">🔴 Inativos — sem comprar há mais de 4 anos</div>', unsafe_allow_html=True)
+    # Inativos +4 anos
+    st.markdown('<div class="sec-title">🔴 Clientes para Revisão (inativos +4 anos)</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="alert-red">⚠️ <strong>{len(inativos_2a)} clientes</strong> sem comprar há mais de 4 anos — considere revisar a carteira</div>', unsafe_allow_html=True)
 
-    if inativos.empty:
-        st.success("✅ Nenhum cliente inativo há mais de 4 anos.")
-    else:
-        st.markdown(
-            f'<div class="alert-red">⚠️ <strong>{len(inativos)} clientes</strong> da carteira '
-            f'sem emplacamento nos últimos 4 anos — revisão recomendada.</div>',
-            unsafe_allow_html=True
-        )
+    if not inativos_2a.empty:
+        _cart_cnpjs_cv = set(df_cart["CNPJ_NORM"].dropna().unique()) if df_cart is not None else set()
+        _cart_map_cv   = df_cart.drop_duplicates("CNPJ_NORM").set_index("CNPJ_NORM")["VENDEDOR"].to_dict() if df_cart is not None else {}
+        _vends_cv      = get_vendedores_ativos()
+        cols_in = ["Nome","CPF/CNPJ","VENDEDOR","UltimaCompra","MesesSem","Classificação Mercedes"]
+        cols_in = [c for c in cols_in if c in inativos_2a.columns]
+        inativos_show = inativos_2a[cols_in].copy()
+        if "CNPJ_NORM" in inativos_2a.columns:
+            inativos_show["Status Cadastro"] = inativos_2a["CNPJ_NORM"].apply(
+                lambda c: "📋 Na Carteira" if c in _cart_cnpjs_cv else "⚠️ NÃO CADASTRADO"
+            )
+        if "UltimaCompra" in inativos_show.columns:
+            inativos_show["UltimaCompra"] = pd.to_datetime(inativos_show["UltimaCompra"], errors="coerce").dt.strftime("%d/%m/%Y").fillna("Nunca")
+        inativos_show["MesesSem"] = inativos_show["MesesSem"].apply(lambda x: f"{x} meses" if x < 999 else "Sem registro")
+        st.dataframe(inativos_show, use_container_width=True, hide_index=True)
 
-        cols_show = ["Nome", "CPF/CNPJ", "VENDEDOR", "UltimaCompra", "MesesSem", "Classificação Mercedes"]
-        cols_show = [c for c in cols_show if c in inativos.columns]
-        inat_show = inativos[cols_show].copy()
-        inat_show["UltimaCompra"] = (
-            pd.to_datetime(inat_show["UltimaCompra"], errors="coerce")
-            .dt.strftime("%d/%m/%Y")
-            .fillna("Nunca comprou")
-        )
-        inat_show["MesesSem"] = inat_show["MesesSem"].apply(
-            lambda x: "Nunca comprou" if x >= 999 else f"{x} meses"
-        )
-        inat_show = inat_show.rename(columns={
-            "VENDEDOR": "Vendedor",
-            "UltimaCompra": "Última Compra",
-            "MesesSem": "Tempo Inativo",
-            "Classificação Mercedes": "Classificação",
-        })
-        st.dataframe(inat_show, use_container_width=True, hide_index=True)
+        inativos_export = inativos_2a.copy()
+        inativos_export["STATUS"] = "INATIVO +4 ANOS — REVISAR CARTEIRA"
+        buf = BytesIO()
+        inativos_export.to_excel(buf, index=False, engine="openpyxl")
+        buf.seek(0)
+        st.download_button("📥 Exportar Inativos para Revisão (XLSX)", buf,
+            file_name="carteira_para_revisao.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-        # Exportar
-        exp = inativos.copy()
-        exp["STATUS"] = "INATIVO +4 ANOS — REVISAR"
-        exp["UltimaCompra"] = pd.to_datetime(exp["UltimaCompra"], errors="coerce").dt.strftime("%d/%m/%Y").fillna("Nunca")
-        buf_in = BytesIO()
-        exp.to_excel(buf_in, index=False, engine="openpyxl")
-        buf_in.seek(0)
-        st.download_button(
-            "📥 Exportar Inativos (XLSX)", buf_in,
-            file_name="carteira_inativos.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-    # ══════════════════════════════════════════
-    # SEÇÃO 2: MAIORES COMPRADORES
-    # ══════════════════════════════════════════
+    # Top compradores
     st.markdown('<div class="sec-title">🏆 Maiores Compradores da Carteira</div>', unsafe_allow_html=True)
+    if df_emp is not None and not cart_view.empty:
+        cnpjs_cart = cart_view["CNPJ_NORM"].unique()
+        emp_cart = df_emp[df_emp["CNPJ_NORM"].isin(cnpjs_cart)].copy()
+        top_c = emp_cart.groupby(["CNPJ_NORM","NOMEPROPRIETARIO","NO_CIDADE"]).agg(
+            TotalCompras=("Chassi","count"),
+            Nigris=("Concessionário", lambda x: is_denigris(x).sum()),
+            UltimaCompra=("Data emplacamento","max"),
+            Marca=("Marca", lambda x: x.mode()[0] if not x.empty else "—"),
+        ).reset_index().sort_values("TotalCompras", ascending=False).head(20)
+        top_c["% De Nigris"] = (top_c["Nigris"]/top_c["TotalCompras"]*100).round(0).astype(int).astype(str)+"%"
+        top_c["UltimaCompra"] = pd.to_datetime(top_c["UltimaCompra"]).dt.strftime("%d/%m/%Y")
+        top_c = top_c.drop(columns=["CNPJ_NORM"]).rename(columns={
+            "NOMEPROPRIETARIO":"Nome","NO_CIDADE":"Cidade",
+            "TotalCompras":"Total","Nigris":"De Nigris",
+            "UltimaCompra":"Última Compra","Marca":"Marca"})
+        top_c.insert(0,"#",range(1,len(top_c)+1))
+        st.dataframe(top_c, use_container_width=True, hide_index=True)
 
-    if df_emp is not None and not cart_view.empty and "TotalCompras" in cart_view.columns:
-        top = (
-            cart_view[cart_view["TotalCompras"] > 0]
-            .sort_values("TotalCompras", ascending=False)
-            .head(20)
-            .copy()
-        )
-        if top.empty:
-            st.info("Nenhum cliente da carteira possui emplacamentos registrados.")
-        else:
-            top["% De Nigris"] = (
-                (top["Nigris"] / top["TotalCompras"] * 100)
-                .round(0).astype(int).astype(str) + "%"
-            )
-            top["UltimaCompra"] = (
-                pd.to_datetime(top["UltimaCompra"], errors="coerce")
-                .dt.strftime("%d/%m/%Y").fillna("—")
-            )
-            top_show_cols = ["Nome", "CPF/CNPJ", "VENDEDOR", "TotalCompras", "Nigris",
-                             "% De Nigris", "UltimaCompra", "Classificação Mercedes"]
-            top_show_cols = [c for c in top_show_cols if c in top.columns]
-            top_show = top[top_show_cols].copy()
-            top_show.insert(0, "#", range(1, len(top_show) + 1))
-            top_show = top_show.rename(columns={
-                "VENDEDOR": "Vendedor",
-                "TotalCompras": "Total Compras",
-                "Nigris": "De Nigris",
-                "UltimaCompra": "Última Compra",
-                "Classificação Mercedes": "Classificação",
-            })
-            st.dataframe(top_show, use_container_width=True, hide_index=True)
-    else:
-        st.info("Carregue os emplacamentos para ver os maiores compradores.")
+    # NÃO CADASTRADOS distribuídos — resumo por vendedor (só gestor/gerente)
+    if perfil in ("gestor","gerente") and df_emp is not None:
+        cnpjs_na_cart2 = set(df_cart["CNPJ_NORM"].dropna().unique())
+        nc_count = sum(1 for c in df_emp["CNPJ_NORM"].unique() if c not in cnpjs_na_cart2)
+        if nc_count > 0:
+            st.markdown('<div class="sec-title">⚖️ Distribuição de Clientes Sem Cadastro</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="alert-blue">ℹ️ <strong>{nc_count} clientes sem cadastro</strong> distribuídos igualmente entre os vendedores ativos por hash de CNPJ (determinístico — mesmo cliente sempre vai ao mesmo vendedor).</div>', unsafe_allow_html=True)
+            vends_ativ2 = get_vendedores_ativos()
+            dist_count = {v: 0 for v in vends_ativ2}
+            for c in df_emp["CNPJ_NORM"].unique():
+                if c not in cnpjs_na_cart2:
+                    v = get_consultor_distribuido(str(c), vends_ativ2)
+                    if v in dist_count:
+                        dist_count[v] += 1
             df_dist_show = pd.DataFrame(list(dist_count.items()), columns=["Vendedor","Clientes Não Cadastrados"]).sort_values("Clientes Não Cadastrados", ascending=False)
             st.dataframe(df_dist_show, use_container_width=True, hide_index=True)
 
