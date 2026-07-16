@@ -2433,10 +2433,11 @@ elif pagina == "emplacamentos":
     # ── CNPJs da carteira (vetorizado, sem loop) ──
     if df_cart is not None:
         todos_cnpjs_cart = set(df_cart["CNPJ_NORM"].dropna().unique())
-        # Comparar em Title Case — df_cart["VENDEDOR"] já está em Title Case desde load_carteira
+        # Comparação normalizada (ignora acentuação/caixa) — evita falso "vazio" para
+        # vendedores com nomes acentuados (ex: José, André, César)
         if sel_cons != "Todos":
             cnpjs_carteira = set(df_cart[
-                df_cart["VENDEDOR"].str.strip().str.title() == sel_cons.strip().title()
+                norm_str_series(df_cart["VENDEDOR"]) == norm_str(sel_cons)
             ]["CNPJ_NORM"].dropna().unique())
         else:
             cnpjs_carteira = todos_cnpjs_cart
@@ -2465,10 +2466,10 @@ elif pagina == "emplacamentos":
     elif not emp_periodo.empty:
         emp_periodo["VENDEDOR_ATRIBUIDO"] = None
 
-    # Filtrar por vendedor
+    # Filtrar por vendedor (comparação normalizada — ignora acentuação/caixa)
     if sel_cons != "Todos":
         emp_mes = emp_periodo[
-            emp_periodo["VENDEDOR_ATRIBUIDO"].str.strip().str.title() == sel_cons.strip().title()
+            norm_str_series(emp_periodo["VENDEDOR_ATRIBUIDO"]) == norm_str(sel_cons)
         ].copy()
     else:
         emp_mes = emp_periodo.copy()
@@ -2676,7 +2677,7 @@ elif pagina == "carteira":
         sel_vend = st.selectbox("Vendedor:", vends)
         cart_view = df_cart.copy() if sel_vend == "Todos" else df_cart[df_cart["VENDEDOR"] == sel_vend].copy()
     else:
-        cart_view = df_cart[df_cart["VENDEDOR"].str.strip().str.title() == cons_key.strip().title()].copy()
+        cart_view = df_cart[norm_str_series(df_cart["VENDEDOR"]) == norm_str(cons_key)].copy()
 
     total_cart = len(cart_view)
 
@@ -3162,7 +3163,9 @@ elif pagina == "painel":
         _cols_p = [c for c in ["Data emplacamento","CPFCNPJPROPRIETARIO","NOMEPROPRIETARIO","Modelo","Marca",
                                 "Concessionário","NO_CIDADE","SG_ESTADO"] if c in df_p.columns]
         det_p = df_p[_cols_p].copy()
-        det_p["Data emplacamento"] = pd.to_datetime(det_p["Data emplacamento"], errors="coerce").dt.strftime("%d/%m/%Y")
+        det_p["Data emplacamento"] = pd.to_datetime(det_p["Data emplacamento"], errors="coerce")
+        det_p = det_p.sort_values("Data emplacamento")
+        det_p["Data emplacamento"] = det_p["Data emplacamento"].dt.strftime("%d/%m/%Y")
         det_p["De Nigris"] = is_denigris(df_p["Concessionário"]).map({True:"✅", False:"—"})
         det_p["Na Carteira"] = df_p["CNPJ_NORM"].isin(todos_cnpjs_cart_p).map({True:"✅", False:"—"})
         det_p = det_p.rename(columns={
@@ -3170,7 +3173,7 @@ elif pagina == "painel":
             "NOMEPROPRIETARIO":"Cliente","Concessionário":"Concessionária",
             "NO_CIDADE":"Cidade","SG_ESTADO":"UF"
         })
-        st.dataframe(det_p.sort_values("Data"), use_container_width=True, hide_index=True)
+        st.dataframe(det_p, use_container_width=True, hide_index=True)
         buf_p = BytesIO()
         det_p.to_excel(buf_p, index=False, engine="openpyxl")
         buf_p.seek(0)
