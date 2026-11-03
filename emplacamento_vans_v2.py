@@ -1637,7 +1637,7 @@ def gerar_relatorio_emplacamento(emp_mes, emp_area, cnpjs_carteira_set, todos_cn
 
     top3 = emp_mes.groupby(["CNPJ_NORM","NOMEPROPRIETARIO","NO_CIDADE"]).agg(
         Total=("Chassi","count"),
-        Nigris=("Concessionário", lambda x: is_denigris(x).sum())
+        Nigris=("Concessionário", lambda x: int(is_denigris(x).sum()))
     ).reset_index().sort_values("Total", ascending=False).head(3).reset_index(drop=True)
 
     medals = ["🥇", "🥈", "🥉"]
@@ -2741,7 +2741,7 @@ elif pagina == "emplacamentos":
     # Q4: Top 3 do período selecionado (mês/ano filtrado)
     top_hist = emp_mes.groupby(["CNPJ_NORM","NOMEPROPRIETARIO","NO_CIDADE"]).agg(
         Total=("Chassi","count"),
-        Nigris=("Concessionário", lambda x: is_denigris(x).sum()),
+        Nigris=("Concessionário", lambda x: int(is_denigris(x).sum())),
     ).reset_index().sort_values("Total", ascending=False).head(3).reset_index(drop=True)
 
     # Preparar mapa resolve_vendedor para uso nos quadrantes
@@ -2923,7 +2923,7 @@ elif pagina == "carteira":
         agg = emp_cart.groupby("CNPJ_NORM").agg(
             UltimaCompra=("Data emplacamento", "max"),
             TotalCompras=("Chassi", "count"),
-            Nigris=("Concessionário", lambda x: is_denigris(x).sum()),
+            Nigris=("Concessionário", lambda x: int(is_denigris(x).sum())),
             UltimoModelo=("Modelo", "last"),
             UltimaConcessionaria=("Concessionário", "last"),
         ).reset_index()
@@ -3198,7 +3198,7 @@ elif pagina == "painel":
             df_sem_cart.groupby(["CNPJ_NORM","NOMEPROPRIETARIO","NO_CIDADE"])
             .agg(
                 Emplacamentos=("Chassi","count"),
-                Nigris=("Concessionário", lambda x: is_denigris(x).sum()),
+                Nigris=("Concessionário", lambda x: int(is_denigris(x).sum())),
                 Ultima=("Data emplacamento","max"),
                 MarcaFreq=("Marca", _moda_segura),
             )
@@ -3206,6 +3206,7 @@ elif pagina == "painel":
             .sort_values("Emplacamentos", ascending=False)
             .head(20)
         )
+        top_sem_cart["Nigris"] = pd.to_numeric(top_sem_cart["Nigris"], errors="coerce").fillna(0)
         top_sem_cart["% De Nigris"] = (top_sem_cart["Nigris"]/top_sem_cart["Emplacamentos"]*100).round(0).astype(int).astype(str)+"%"
         top_sem_cart["Ultima"] = pd.to_datetime(top_sem_cart["Ultima"]).dt.strftime("%d/%m/%Y")
         top_sem_cart.insert(0,"#", range(1, len(top_sem_cart)+1))
@@ -3249,7 +3250,7 @@ elif pagina == "painel":
                 .agg(
                     Perdidas=("Chassi","count"),
                     Clientes_Perdidos=("CNPJ_NORM","nunique"),
-                    Conc_Principal=("Concessionário", lambda x: x.value_counts().index[0] if not x.empty else "—")
+                    Conc_Principal=("Concessionário", _moda_segura)
                 )
                 .reset_index()
                 .sort_values("Perdidas", ascending=False)
@@ -3342,7 +3343,7 @@ elif pagina == "painel":
             df_p_vend.groupby("VENDEDOR_FINAL")
             .agg(
                 Total=("Chassi","count"),
-                De_Nigris=("Concessionário", lambda x: is_denigris(x).sum()),
+                De_Nigris=("Concessionário", lambda x: int(is_denigris(x).sum())),
                 Concorrencia=("Concessionário", lambda x: (~is_denigris(x)).sum()),
                 Clientes=("CNPJ_NORM","nunique"),
                 Em_Carteira=("_VEND_ALL", lambda x: x.notna().sum()),
@@ -3450,8 +3451,8 @@ elif pagina == "painel":
                 Cidade=("NO_CIDADE", "first"),
                 QtdConc=("Chassi", "count"),
                 UltimaData=("Data emplacamento", "max"),
-                PrincipalConc=("Concessionário", lambda x: x.value_counts().index[0]),
-                Modelos=("Modelo", lambda x: ", ".join(x.dropna().unique()[:3])),
+                PrincipalConc=("Concessionário", _moda_segura),
+                Modelos=("Modelo", lambda x: ", ".join(map(str, x.dropna().unique()[:3]))),
             )
             .reset_index()
             .sort_values("QtdConc", ascending=False)
@@ -3594,7 +3595,7 @@ elif pagina == "gestao":
         df_gx["Consultor"] = df_gx["Consultor"].str.title()
         perf = df_gx.groupby("Consultor").agg(
             Total=("Chassi","count"),
-            Nigris=("Concessionário", lambda x: is_denigris(x).sum()),
+            Nigris=("Concessionário", lambda x: int(is_denigris(x).sum())),
             Conc=("Concessionário", lambda x: (~is_denigris(x)).sum()),
             Clientes=("CNPJ_NORM","nunique"),
         ).reset_index().sort_values("Total",ascending=False)
@@ -3616,7 +3617,7 @@ elif pagina == "gestao":
     st.markdown('<div class="sec-title">📅 Evolução Mensal</div>', unsafe_allow_html=True)
     df_g["AnoMes"] = df_g["Ano"].astype(str)+"-"+df_g["Mes"].astype(str).str.zfill(2)
     evol = df_g.groupby("AnoMes").agg(Total=("Chassi","count"),
-        Nigris=("Concessionário", lambda x: is_denigris(x).sum())).reset_index().sort_values("AnoMes")
+        Nigris=("Concessionário", lambda x: int(is_denigris(x).sum()))).reset_index().sort_values("AnoMes")
     evol["Conc"] = evol["Total"] - evol["Nigris"]
     fig_e = go.Figure()
     fig_e.add_trace(go.Scatter(x=evol["AnoMes"], y=evol["Nigris"], name="De Nigris",
