@@ -1,9 +1,9 @@
 {
   "ADMIN": {
-    "senha_hash": "0e89f223e226ae63268cf39152ab75722e811b89d29efb22a852f1667bd22ae0",
+    "senha_hash": "pbkdf2$210000$ccc48d844fe369cb0356c646aeb809f9$701086813b79843e629e655e5111560a4ee8c0f8ee5c071137ff769d074c9acc",
     "perfil": "gestor",
     "nome": "Administrador",
-    "ultimo_acesso": "2026-06-17T10:58:28"
+    "ultimo_acesso": "2026-11-03T12:53:25"
   },
   "EDIVANDA": {
     "senha_hash": "dbbe414ad8ffcb364e269f99c75c2065fdc4c07f33f0afeae3344547afe5167f",
