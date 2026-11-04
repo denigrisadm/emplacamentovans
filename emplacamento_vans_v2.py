@@ -3871,6 +3871,81 @@ elif pagina == "gestao":
             st.download_button("👥 Consultores", buf2, file_name="consultores.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
+    # ══════════════════════════════════════════════════════════
+    # SDR — gerar lista para campanha de WhatsApp
+    # ══════════════════════════════════════════════════════════
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown('<div class="sec-title">📲 SDR — Gerar Lista para Campanha WhatsApp</div>', unsafe_allow_html=True)
+    st.caption("Usa os anos, meses e consultor já filtrados no topo da página. Refine por modelo, segmento e atividade abaixo, e exporte pronto para disparo.")
+
+    sdr1, sdr2, sdr3 = st.columns(3)
+    with sdr1:
+        modelos_sdr = st.multiselect("Modelo(s)", sorted(df_g["Modelo"].dropna().unique().tolist()), default=[], key="sdr_modelos")
+    with sdr2:
+        seg_opts_sdr = sorted(df_g["Segmento"].dropna().unique().tolist()) if "Segmento" in df_g.columns else []
+        segmentos_sdr = st.multiselect("Segmento(s)", seg_opts_sdr, default=[], key="sdr_segmentos")
+    with sdr3:
+        ativ_opts_sdr = sorted(df_g["ATIVIDADE_ECONOMICA"].dropna().unique().tolist()) if "ATIVIDADE_ECONOMICA" in df_g.columns else []
+        ativ_sdr = st.multiselect("Atividade Econômica", ativ_opts_sdr, default=[], key="sdr_atividade")
+
+    sdr4, sdr5 = st.columns([1.6, 1])
+    with sdr4:
+        escopo_sdr = st.radio("Escopo", ["Todos", "Somente não cadastrados (oportunidade)", "Somente carteira De Nigris"],
+                              horizontal=True, key="sdr_escopo")
+    with sdr5:
+        apenas_com_celular_sdr = st.checkbox("Somente com celular válido", value=True, key="sdr_apenas_celular")
+
+    cnpjs_cart_all_g = set(df_cart["CNPJ_NORM"].dropna()) if df_cart is not None else set()
+    df_sdr = df_g.copy()
+    if modelos_sdr: df_sdr = df_sdr[df_sdr["Modelo"].isin(modelos_sdr)]
+    if segmentos_sdr and "Segmento" in df_sdr.columns: df_sdr = df_sdr[df_sdr["Segmento"].isin(segmentos_sdr)]
+    if ativ_sdr and "ATIVIDADE_ECONOMICA" in df_sdr.columns: df_sdr = df_sdr[df_sdr["ATIVIDADE_ECONOMICA"].isin(ativ_sdr)]
+    if escopo_sdr == "Somente não cadastrados (oportunidade)":
+        df_sdr = df_sdr[~df_sdr["CNPJ_NORM"].isin(cnpjs_cart_all_g)]
+    elif escopo_sdr == "Somente carteira De Nigris":
+        df_sdr = df_sdr[df_sdr["CNPJ_NORM"].isin(cnpjs_cart_all_g)]
+
+    def _melhor_celular_sdr(row):
+        # Só celular de verdade — WhatsApp não funciona em telefone fixo, então NÃO cai para TELEFONE1-5 aqui.
+        for i in [1, 2, 3]:
+            n = make_fone_num(row.get(f"DDD_CELULAR{i}"), row.get(f"CELULAR{i}"))
+            if n: return n
+        return ""
+
+    def _melhor_email_sdr(row):
+        # Prioriza o e-mail da empresa; se não tiver, cai pro e-mail dos sócios cadastrados.
+        e = safe_str(row.get("EMAIL", ""), "")
+        if e and "@" in e:
+            return e
+        for i in [1, 2, 3]:
+            e = safe_str(row.get(f"EMAIL_SOCIO{i}", ""), "")
+            if e and "@" in e:
+                return e
+        return ""
+
+    if df_sdr.empty:
+        st.info("Nenhum cliente com esses filtros.")
+    else:
+        df_sdr_cli = df_sdr.sort_values("Data emplacamento", ascending=False).groupby("CNPJ_NORM", as_index=False).first()
+        df_sdr_cli["Celular"] = df_sdr_cli.apply(_melhor_celular_sdr, axis=1)
+        df_sdr_cli["E-mail"] = df_sdr_cli.apply(_melhor_email_sdr, axis=1)
+        if apenas_com_celular_sdr:
+            df_sdr_cli = df_sdr_cli[df_sdr_cli["Celular"] != ""]
+
+        lista_sdr = df_sdr_cli[["NOMEPROPRIETARIO", "Celular", "E-mail"]].rename(columns={"NOMEPROPRIETARIO": "Nome / Empresa"})
+        lista_sdr = lista_sdr.drop_duplicates(subset=["Celular"]).reset_index(drop=True)
+
+        n_com_email = int((lista_sdr["E-mail"] != "").sum())
+        st.caption(f"📋 **{len(lista_sdr)} contato(s)** prontos para campanha com os filtros atuais — **{n_com_email}** também com e-mail encontrado.")
+        st.dataframe(lista_sdr.head(30), use_container_width=True, hide_index=True)
+        if len(lista_sdr) > 30:
+            st.caption(f"Mostrando 30 de {len(lista_sdr)} — a exportação traz a lista completa.")
+
+        buf_sdr = BytesIO(); lista_sdr.to_excel(buf_sdr, index=False, engine="openpyxl"); buf_sdr.seek(0)
+        st.download_button("📲 Gerar Lista SDR (xlsx)", buf_sdr, file_name="lista_sdr_campanha.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True, key="dl_sdr")
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # PÁGINA: OPORTUNIDADES
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
