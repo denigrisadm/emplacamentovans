@@ -13,11 +13,11 @@
     "ultimo_acesso": "2026-06-10T15:10:48"
   },
   "HELDER": {
-    "senha_hash": "b7517eee997651cde608257ec2312e51abc06c2a2718b9fe39f6d4256967011d",
+    "senha_hash": "pbkdf2$210000$4194feea662157b50a1442b6194f9393$0952161e1b71355b236c3d2c43a3305fd253c3b63ac2c0369dab0ceee98c2caf",
     "perfil": "vendedor",
     "nome": "HELDER FARIA",
     "consultor_key": "HELDER FARIA",
-    "ultimo_acesso": "2026-06-10T15:09:55"
+    "ultimo_acesso": "2026-11-04T09:03:10"
   },
   "OZENI": {
     "senha_hash": "0dec3057682ffc664e4920bb80b44a842d554a6dda9a9d13d161038520ce36e4",
