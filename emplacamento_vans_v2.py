@@ -797,10 +797,235 @@ def save_users(users):
         pass
     return gh_ok, gh_err
 
+# ════════════════════════════════════════════════════════════════
+# REGISTRO DE ACESSOS — compartilhado entre todas as sessões e salvo
+# numa branch separada do GitHub ("registro-acessos"). Gravar nessa branch
+# NÃO reinicia o app (o Streamlit Cloud só observa a branch publicada).
+# ════════════════════════════════════════════════════════════════
+import threading as _threading
+_ACESSOS_ARQ = "data/acessos.json"
+_ACESSOS_BRANCH = "registro-acessos"
+_ACESSOS_MAX_HIST = 3000
+_ACESSOS_INTERVALO = 60          # segundos mínimos entre gravações no GitHub
+_ATIVIDADE_INTERVALO = 120       # segundos entre marcações de "última atividade"
+
+def _agora_brt():
+    return (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=3)).replace(tzinfo=None)
+
+def _gh_api(metodo, url, token, corpo=None, timeout=15):
+    import urllib.request, urllib.error
+    req = urllib.request.Request(url, method=metodo,
+        data=json.dumps(corpo).encode() if corpo is not None else None,
+        headers={"Authorization": f"token {token}", "Accept": "application/vnd.github+json",
+                 "Content-Type": "application/json", "User-Agent": "denigris-app"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            txt = r.read().decode()
+            return r.status, (json.loads(txt) if txt else {})
+    except urllib.error.HTTPError as e:
+        try: det = json.loads(e.read().decode()).get("message", "")
+        except Exception: det = ""
+        return e.code, {"message": det}
+    except Exception as e:
+        return 0, {"message": str(e)}
+
+def _repo_acessos():
+    token, repo, branch = _gh_secrets()
+    if repo and "/" not in repo:
+        repo = f"denigrisadm/{repo}"
+    return token, repo, branch or "main"
+
+@st.cache_resource(show_spinner=False)
+def _acessos_store():
+    store = {"ultimo": {}, "atividade": {}, "hist": [], "lock": _threading.Lock(),
+             "sujo": False, "ult_envio": 0.0, "timer": None, "status": "", "erro": "", "sha": None}
+    try:
+        token, repo, _br = _repo_acessos()
+        if token and repo:
+            cod, js = _gh_api("GET", f"https://api.github.com/repos/{repo}/contents/{_ACESSOS_ARQ}?ref={_ACESSOS_BRANCH}", token)
+            if cod == 200:
+                dados = json.loads(base64.b64decode(js["content"].replace("\n", "")).decode("utf-8"))
+                store["ultimo"] = dict(dados.get("ultimo", {}))
+                store["atividade"] = dict(dados.get("atividade", {}))
+                store["hist"] = list(dados.get("hist", []))[-_ACESSOS_MAX_HIST:]
+                store["sha"] = js.get("sha")
+                store["status"] = "carregado"
+            elif cod == 404:
+                store["status"] = "novo"
+            else:
+                store["erro"] = f"Leitura do registro: HTTP {cod} {js.get('message', '')}".strip()
+    except Exception as e:
+        store["erro"] = f"Leitura do registro: {e}"
+    return store
+
+def _acessos_gravar_agora(store, cfg):
+    """Grava o registro na branch separada (roda em thread, nunca trava a tela)."""
+    token, repo, base_branch = cfg
+    if not (token and repo):
+        store["erro"] = "GitHub não configurado (GH_TOKEN) — registro só fica até o app reiniciar."
+        store["timer"] = None
+        return
+    with store["lock"]:
+        if not store["sujo"]:
+            return
+        payload = {"atualizado_em": _agora_brt().strftime("%Y-%m-%dT%H:%M:%S"),
+                   "ultimo": dict(store["ultimo"]), "atividade": dict(store["atividade"]),
+                   "hist": list(store["hist"][-_ACESSOS_MAX_HIST:])}
+        store["sujo"] = False
+        store["timer"] = None
+    api = f"https://api.github.com/repos/{repo}"
+    try:
+        # garante a branch separada
+        cod, _ = _gh_api("GET", f"{api}/git/ref/heads/{_ACESSOS_BRANCH}", token)
+        if cod == 404:
+            c2, ref = _gh_api("GET", f"{api}/git/ref/heads/{base_branch}", token)
+            if c2 != 200:
+                raise RuntimeError(f"HTTP {c2} ao ler a branch {base_branch}: {ref.get('message', '')}")
+            c3, r3 = _gh_api("POST", f"{api}/git/refs", token,
+                             {"ref": f"refs/heads/{_ACESSOS_BRANCH}", "sha": ref["object"]["sha"]})
+            if c3 not in (200, 201):
+                raise RuntimeError(f"HTTP {c3} ao criar a branch: {r3.get('message', '')}")
+        elif cod != 200:
+            raise RuntimeError(f"HTTP {cod} ao ler a branch do registro")
+        conteudo = base64.b64encode(json.dumps(payload, ensure_ascii=False).encode("utf-8")).decode()
+        for _tentativa in range(2):
+            sha = store.get("sha")
+            if sha is None:
+                c4, r4 = _gh_api("GET", f"{api}/contents/{_ACESSOS_ARQ}?ref={_ACESSOS_BRANCH}", token)
+                sha = r4.get("sha") if c4 == 200 else None
+            corpo = {"message": "Registro de acessos", "content": conteudo, "branch": _ACESSOS_BRANCH}
+            if sha: corpo["sha"] = sha
+            c5, r5 = _gh_api("PUT", f"{api}/contents/{_ACESSOS_ARQ}", token, corpo)
+            if c5 in (200, 201):
+                store["sha"] = r5.get("content", {}).get("sha")
+                store["ult_envio"] = time.time()
+                store["status"] = "salvo"; store["erro"] = ""
+                return
+            store["sha"] = None          # sha desatualizado → relê e tenta de novo
+        raise RuntimeError(f"HTTP {c5}: {r5.get('message', '')}")
+    except Exception as e:
+        store["erro"] = f"Não consegui salvar o registro de acessos no GitHub ({e})."
+        with store["lock"]:
+            store["sujo"] = True
+
+def _acessos_agendar():
+    store = _acessos_store()
+    with store["lock"]:
+        if store["timer"] is not None:
+            return
+        espera = max(0.0, _ACESSOS_INTERVALO - (time.time() - store["ult_envio"]))
+        t = _threading.Timer(espera, _acessos_gravar_agora, args=(store, _repo_acessos()))
+        t.daemon = True
+        store["timer"] = t
+    t.start()
+
+def registrar_evento_acesso(login, tipo="login"):
+    """tipo: 'login' (digitou a senha) ou 'retorno' (voltou pelo link salvo / F5 em nova aba)."""
+    if not login:
+        return
+    try:
+        store = _acessos_store()
+        agora = _agora_brt().strftime("%Y-%m-%dT%H:%M:%S")
+        with store["lock"]:
+            store["ultimo"][login] = agora
+            store["atividade"][login] = agora
+            store["hist"].append({"login": login, "quando": agora, "tipo": tipo})
+            if len(store["hist"]) > _ACESSOS_MAX_HIST:
+                del store["hist"][:-_ACESSOS_MAX_HIST]
+            store["sujo"] = True
+        _acessos_agendar()
+    except Exception:
+        pass
+
+def marcar_atividade(login):
+    """Atualiza 'última atividade' no máximo a cada 2 min por sessão (só memória + próxima gravação)."""
+    if not login:
+        return
+    try:
+        if time.time() - st.session_state.get("_ult_marca_ativ", 0) < _ATIVIDADE_INTERVALO:
+            return
+        st.session_state["_ult_marca_ativ"] = time.time()
+        store = _acessos_store()
+        with store["lock"]:
+            store["atividade"][login] = _agora_brt().strftime("%Y-%m-%dT%H:%M:%S")
+            store["sujo"] = True
+        _acessos_agendar()
+    except Exception:
+        pass
+
+def _fmt_brt(iso):
+    if not iso:
+        return "Nunca"
+    try:
+        dt = datetime.datetime.fromisoformat(str(iso).split("+")[0].split("Z")[0][:19])
+    except Exception:
+        return str(iso)[:16]
+    hoje = _agora_brt().date()
+    if dt.date() == hoje:
+        return "Hoje " + dt.strftime("%H:%M")
+    if dt.date() == hoje - datetime.timedelta(days=1):
+        return "Ontem " + dt.strftime("%H:%M")
+    return dt.strftime("%d/%m/%Y %H:%M")
+
+def painel_acessos(USERS):
+    """Tabela de últimos acessos + histórico, para a aba de Usuários do Admin."""
+    store = _acessos_store()
+    st.markdown('<div class="sec-title">🕒 Últimos acessos</div>', unsafe_allow_html=True)
+    c_a, c_b = st.columns([4, 1])
+    with c_b:
+        if st.button("🔄 Atualizar", key="btn_atualizar_acessos", use_container_width=True):
+            st.rerun()
+    with store["lock"]:
+        ultimo = dict(store["ultimo"]); ativ = dict(store["atividade"]); hist = list(store["hist"])
+    agora = _agora_brt()
+    lim7 = (agora - datetime.timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%S")
+    lim30 = (agora - datetime.timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%S")
+    c7, c30 = Counter(), Counter()
+    for h in hist:
+        if h.get("quando", "") >= lim30: c30[h.get("login")] += 1
+        if h.get("quando", "") >= lim7: c7[h.get("login")] += 1
+    rows = []
+    for login, ud in USERS.items():
+        ua = ultimo.get(login) or ud.get("ultimo_acesso")
+        at_ = ativ.get(login) or ua
+        try:
+            min_off = (agora - datetime.datetime.fromisoformat(str(at_)[:19])).total_seconds() / 60 if at_ else None
+        except Exception:
+            min_off = None
+        status = "🟢 Online" if (min_off is not None and min_off <= 10) else ("🟡 Hoje" if (at_ and str(at_)[:10] == agora.strftime("%Y-%m-%d")) else "⚪")
+        rows.append({"Status": status, "Login": login, "Nome": ud.get("nome", ""), "Perfil": ud.get("perfil", ""),
+                     "Último acesso": _fmt_brt(ua), "Última atividade": _fmt_brt(at_),
+                     "Acessos 7 dias": c7.get(login, 0), "Acessos 30 dias": c30.get(login, 0), "_ord": str(at_ or "")})
+    df_u = pd.DataFrame(rows).sort_values("_ord", ascending=False).drop(columns="_ord")
+    with c_a:
+        n_on = int((df_u["Status"] == "🟢 Online").sum()) if not df_u.empty else 0
+        n_hj = int(df_u["Status"].isin(["🟢 Online", "🟡 Hoje"]).sum()) if not df_u.empty else 0
+        n_nunca = int((df_u["Último acesso"] == "Nunca").sum()) if not df_u.empty else 0
+        st.caption(f"🟢 {n_on} online agora · 🟡 {n_hj} acessaram hoje · {n_nunca} nunca acessaram · horário de Brasília")
+    st.dataframe(df_u, use_container_width=True, hide_index=True)
+    if store.get("erro"):
+        st.warning("⚠️ " + store["erro"])
+    elif store.get("status") == "salvo":
+        st.caption("✅ Registro salvo no GitHub (branch registro-acessos) — não se perde quando o app reinicia.")
+    with st.expander(f"📜 Histórico de acessos ({len(hist)} registros)"):
+        if hist:
+            dh = pd.DataFrame(hist[::-1][:300])
+            dh["Quando"] = dh["quando"].map(_fmt_brt)
+            dh["Nome"] = dh["login"].map(lambda l: USERS.get(l, {}).get("nome", l))
+            dh["Como"] = dh.get("tipo", "login").map({"login": "🔑 Login com senha", "retorno": "↩️ Voltou (sessão salva)"}).fillna("🔑 Login com senha")
+            st.dataframe(dh[["Quando", "login", "Nome", "Como"]].rename(columns={"login": "Login"}),
+                         use_container_width=True, hide_index=True)
+            buf_h = BytesIO(); pd.DataFrame(hist).to_excel(buf_h, index=False, engine="openpyxl"); buf_h.seek(0)
+            st.download_button("📥 Exportar histórico (xlsx)", buf_h, file_name="historico_acessos.xlsx",
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="dl_hist_acessos")
+        else:
+            st.info("Ainda não há acessos registrados desde a atualização.")
+
 def registrar_acesso(login, migrar_hash_de=None):
     """Último acesso em memória. Só grava no GitHub ao migrar a senha para o formato seguro
     (ou 1x/dia se PERSISTIR_ULTIMO_ACESSO=true). Antes, todo login gerava commit e reiniciava o app."""
     users = st.session_state.get("users_db") or load_users()
+    registrar_evento_acesso(login, "login")
     if login not in users:
         return
     try:
@@ -1927,10 +2152,12 @@ if st.session_state.user is None:
     _q_user = str(_qp.get("u", "")).strip().upper(); _q_tok = str(_qp.get("t", "")).strip()
     if _q_user and _q_tok and _q_user in USERS and _token_valido(_q_user, USERS[_q_user], _q_tok):
         st.session_state.user = _q_user
+        registrar_evento_acesso(_q_user, "retorno")
 
 # Só carrega dados se usuário já está logado (evita delay na tela de login)
 if st.session_state.user is not None:
     carregar_dados_se_necessario()
+    marcar_atividade(st.session_state.user)
 
 if st.session_state.user is None:
     logo_html = logo_img(72) if LOGO_B64 else '<span style="font-size:24px;font-weight:800;color:#1d1d1f;">Comercial De Nigris</span>'
@@ -3793,7 +4020,7 @@ elif pagina == "admin":
                 st.markdown(f'<div style="background:#fff8e0;border-left:4px solid #f0a000;padding:10px 14px;border-radius:8px;margin-bottom:10px;font-size:12px;">⚠️ <strong>GitHub com erro.</strong> Detalhes: <code>{sha_or_err}</code></div>', unsafe_allow_html=True)
             # Diagnóstico de arquivos de dados
             import urllib.request, urllib.parse
-            arquivos_teste = ["CARTEIRA_VANS.xlsx", "EMPLACAMENTO APP VANS.xlsx"]
+            arquivos_teste = ["CARTEIRA_VANS.xlsx", EMP_PARQUET_NOME] if st.toggle("🩺 Testar arquivos de dados no GitHub", key="tg_diag_gh") else []
             diag_linhas = []
             for arq in arquivos_teste:
                 arq_enc = urllib.parse.quote(arq)
@@ -3819,28 +4046,11 @@ elif pagina == "admin":
                     except Exception as ex3:
                         diag_linhas.append(f"🔴 <code>{arq}</code> — API: {ex2} | RAW: {ex3}")
             diag_html = "<br>".join(diag_linhas)
-            st.markdown(f'<div style="background:#f8f8f8;border-left:3px solid #888;padding:10px 14px;border-radius:6px;font-size:12px;margin-bottom:8px;"><strong>Diagnóstico de arquivos:</strong><br>{diag_html}</div>', unsafe_allow_html=True)
+            if diag_linhas: st.markdown(f'<div style="background:#f8f8f8;border-left:3px solid #888;padding:10px 14px;border-radius:6px;font-size:12px;margin-bottom:8px;"><strong>Diagnóstico de arquivos:</strong><br>{diag_html}</div>', unsafe_allow_html=True)
         else:
             st.markdown('<div style="background:#fff0f0;border-left:4px solid #c0392b;padding:10px 14px;border-radius:8px;margin-bottom:10px;font-size:12px;">🔴 <strong>GitHub não configurado.</strong> Usuários só persistem até o próximo reboot. Configure <code>GH_TOKEN</code>, <code>GH_REPO</code> e <code>GH_BRANCH</code> nos Secrets do Streamlit Cloud (Settings → Secrets).</div>', unsafe_allow_html=True)
 
-        st.markdown('<div class="sec-title">👥 Usuários Cadastrados</div>', unsafe_allow_html=True)
-
-        # Tabela de usuários com último acesso
-        rows = []
-        for login, ud in USERS.items():
-            ua = ud.get("ultimo_acesso")
-            if ua:
-                try:
-                    # Suporta formatos: "2025-01-15T14:32:00", "2025-01-15T14:32:00.123456", etc.
-                    ua_dt = datetime.datetime.fromisoformat(str(ua).split("+")[0].split("Z")[0][:19])
-                    ua_fmt = ua_dt.strftime("%d/%m/%Y %H:%M") + " (BRT)"
-                except Exception:
-                    ua_fmt = str(ua)[:16]
-            else:
-                ua_fmt = "Nunca"
-            rows.append({"Login":login,"Nome":ud.get("nome",""),"Perfil":ud.get("perfil",""),"Último Acesso":ua_fmt})
-        df_u = pd.DataFrame(rows)
-        st.dataframe(df_u, use_container_width=True, hide_index=True)
+        painel_acessos(USERS)
 
         st.markdown('<div class="sec-title">➕ Criar / Editar Usuário</div>', unsafe_allow_html=True)
 
