@@ -72,8 +72,13 @@ EMP_PARQUET_NOME = "EMPLACAMENTOS_VANS.parquet"   # base oficial, atualizada pel
 NOMES_DENIGRIS = ["COMERCIAL DE VEICULOS DE NIGRIS LTDA"]
 REGEX_DENIGRIS = "|".join([re.escape(n) for n in NOMES_DENIGRIS])
 
+# Comparação "compacta" (só letras): pega "...DE NIGRIS LTD", "...LTDA.", "COMERCIALDEVEICULOSDENIGRISLTDA" etc.
+# Só a Comercial de Veículos De Nigris é "nossa". A De Nigris Distribuidora é CONCORRENTE (confirmado pelo gestor em 05/11/2026).
+_RX_DN_COMPACTO = "COMERCIALDEVEICULOSDENIGRIS"
+
 def is_denigris(serie):
-    return serie.astype(str).str.upper().str.contains(REGEX_DENIGRIS, na=False, regex=True)
+    s = serie.astype(str).str.upper().str.replace(r"[^A-Z]", "", regex=True)
+    return s.str.contains(_RX_DN_COMPACTO, na=False, regex=True)
 
 MESES_PT = {1:"Janeiro",2:"Fevereiro",3:"Março",4:"Abril",5:"Maio",6:"Junho",
             7:"Julho",8:"Agosto",9:"Setembro",10:"Outubro",11:"Novembro",12:"Dezembro"}
