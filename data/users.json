@@ -6,11 +6,11 @@
     "ultimo_acesso": "2026-11-03T12:53:25"
   },
   "EDIVANDA": {
-    "senha_hash": "dbbe414ad8ffcb364e269f99c75c2065fdc4c07f33f0afeae3344547afe5167f",
+    "senha_hash": "pbkdf2$210000$47ade20510bead683c86160fc900ae17$eca163cdd576277aed2ed4ed374a85c36380db20de5b33c0ff748d8c48d11675",
     "perfil": "vendedor",
     "nome": "EDIVANDA FERNANDES",
     "consultor_key": "EDIVANDA FERNANDES",
-    "ultimo_acesso": "2026-06-10T15:10:48"
+    "ultimo_acesso": "2026-11-05T16:18:51"
   },
   "HELDER": {
     "senha_hash": "pbkdf2$210000$4194feea662157b50a1442b6194f9393$0952161e1b71355b236c3d2c43a3305fd253c3b63ac2c0369dab0ceee98c2caf",
