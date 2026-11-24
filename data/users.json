@@ -34,11 +34,11 @@
     "ultimo_acesso": "2026-05-28T17:35:12"
   },
   "HADASSA": {
-    "senha_hash": "7bbab91205ee605e4ae29a4868906696bb3fdb3d952192255ceb2213c5011f4d",
+    "senha_hash": "pbkdf2$210000$1efec70159530deab2131d713347b676$98376ae1399b3f82837a6d1a1b6fd79cc80840788eff70b9b1d9640db3957ae0",
     "perfil": "vendedor",
     "nome": "HADASSA VASCONCELOS",
     "consultor_key": "HADASSA REGINA PALLONE VASCONCELOS",
-    "ultimo_acesso": "2026-06-16T14:22:08"
+    "ultimo_acesso": "2026-11-24T10:56:32"
   },
   "PAULA": {
     "senha_hash": "c9336f144e411fa01f48ff3067d2e53e28332f346cd2fe25b95cbc204f5a2da8",
