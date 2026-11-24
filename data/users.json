@@ -27,11 +27,11 @@
     "ultimo_acesso": "2026-05-25T16:56:37"
   },
   "MARCIA": {
-    "senha_hash": "9bb8243988a7aa0f742fdc002fe3fd8ac320807dae9c2a9b4c5c688ac8202377",
+    "senha_hash": "pbkdf2$210000$1e95944323a7205ea40aa8e1dce9bab8$a54e267fa98767890ac73720a43b7a3ee8cd822041d686b0d332a341df3cb8c6",
     "perfil": "vendedor",
     "nome": "MARCIA HENKEL",
     "consultor_key": "MARCIA HENKEL",
-    "ultimo_acesso": "2026-05-28T17:35:12"
+    "ultimo_acesso": "2026-11-24T15:58:31"
   },
   "HADASSA": {
     "senha_hash": "pbkdf2$210000$1efec70159530deab2131d713347b676$98376ae1399b3f82837a6d1a1b6fd79cc80840788eff70b9b1d9640db3957ae0",
