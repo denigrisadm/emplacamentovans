@@ -20,11 +20,11 @@
     "ultimo_acesso": "2026-11-04T09:03:10"
   },
   "OZENI": {
-    "senha_hash": "0dec3057682ffc664e4920bb80b44a842d554a6dda9a9d13d161038520ce36e4",
+    "senha_hash": "pbkdf2$210000$df95d191626b607b50b8fda850133b4e$a581c38333d46ff1c017e1bff299753f02cee54eaf6a208782d60f656e89c11f",
     "perfil": "vendedor",
     "nome": "OZENI RODRIGUES",
     "consultor_key": "OZENI RODRIGUES",
-    "ultimo_acesso": "2026-05-25T16:56:37"
+    "ultimo_acesso": "2026-11-27T16:19:07"
   },
   "MARCIA": {
     "senha_hash": "pbkdf2$210000$1e95944323a7205ea40aa8e1dce9bab8$a54e267fa98767890ac73720a43b7a3ee8cd822041d686b0d332a341df3cb8c6",
